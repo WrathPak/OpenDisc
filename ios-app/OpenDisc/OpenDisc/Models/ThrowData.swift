@@ -4,38 +4,36 @@ import SwiftData
 @Model
 final class ThrowData {
     var timestamp: Date
-    var releaseMPH: Float
-    var releaseRPM: Float
-    var peakRPM: Float
+    var mph: Float
+    var rpm: Float
     var peakG: Float
-    var launchHyzer: Float
-    var launchNose: Float
+    var hyzer: Float
+    var nose: Float
     var wobble: Float
     var durationMS: Int
     var isValid: Bool
 
     var displayMPH: String {
-        releaseMPH < 0 ? "--" : String(format: "%.1f", releaseMPH)
+        mph < 0 ? "--" : String(format: "%.1f", mph)
     }
 
     var displayRPM: String {
-        String(format: "%.0f", releaseRPM)
+        String(format: "%.0f", rpm)
     }
 
     var displayHyzer: String {
-        String(format: "%.1f\u{00B0}", launchHyzer)
+        String(format: "%.1f\u{00B0}", hyzer)
     }
 
-    init(timestamp: Date, releaseMPH: Float, releaseRPM: Float, peakRPM: Float,
-         peakG: Float, launchHyzer: Float, launchNose: Float, wobble: Float,
+    init(timestamp: Date, mph: Float, rpm: Float, peakG: Float,
+         hyzer: Float, nose: Float, wobble: Float,
          durationMS: Int, isValid: Bool) {
         self.timestamp = timestamp
-        self.releaseMPH = releaseMPH
-        self.releaseRPM = releaseRPM
-        self.peakRPM = peakRPM
+        self.mph = mph
+        self.rpm = rpm
         self.peakG = peakG
-        self.launchHyzer = launchHyzer
-        self.launchNose = launchNose
+        self.hyzer = hyzer
+        self.nose = nose
         self.wobble = wobble
         self.durationMS = durationMS
         self.isValid = isValid

@@ -4,6 +4,7 @@ import SwiftData
 struct DashboardView: View {
     @Environment(BLEManager.self) private var bleManager
     @Environment(\.modelContext) private var modelContext
+    @State private var voiceSettings = VoiceSettings.load()
 
     var body: some View {
         NavigationStack {
@@ -14,7 +15,7 @@ struct DashboardView: View {
                         deviceState: bleManager.deviceState
                     )
 
-                    SpeedDisplay(mph: bleManager.lastThrow?.release_mph)
+                    SpeedDisplay(mph: bleManager.lastThrow?.mph)
 
                     if let live = bleManager.liveReading {
                         liveGauges(live)
@@ -38,8 +39,14 @@ struct DashboardView: View {
             .onChange(of: bleManager.throwReady) { _, ready in
                 if ready {
                     saveThrow()
+                    if let response = bleManager.lastThrow {
+                        VoiceManager.announceThrow(response, settings: voiceSettings)
+                    }
                     bleManager.throwReady = false
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .voiceSettingsChanged)) { _ in
+                voiceSettings = VoiceSettings.load()
             }
         }
     }
@@ -94,12 +101,11 @@ struct DashboardView: View {
         guard let response = bleManager.lastThrow, response.valid else { return }
         let throwData = ThrowData(
             timestamp: Date(),
-            releaseMPH: response.release_mph,
-            releaseRPM: response.release_rpm,
-            peakRPM: response.peak_rpm,
+            mph: response.mph,
+            rpm: response.rpm,
             peakG: response.peak_g,
-            launchHyzer: response.launch_hyzer,
-            launchNose: response.launch_nose,
+            hyzer: response.hyzer,
+            nose: response.nose,
             wobble: response.wobble,
             durationMS: response.duration_ms,
             isValid: response.valid

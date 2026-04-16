@@ -26,12 +26,11 @@ struct LiveResponse: Decodable {
 struct ThrowResponse: Decodable {
     let type: String
     let valid: Bool
-    let peak_rpm: Float
-    let release_rpm: Float
-    let release_mph: Float
+    let rpm: Float
+    let mph: Float
     let peak_g: Float
-    let launch_hyzer: Float
-    let launch_nose: Float
+    let hyzer: Float
+    let nose: Float
     let wobble: Float
     let duration_ms: Int
     let release_idx: Int

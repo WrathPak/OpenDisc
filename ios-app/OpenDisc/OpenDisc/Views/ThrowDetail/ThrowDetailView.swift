@@ -28,24 +28,24 @@ struct ThrowDetailView: View {
                 // Metrics grid
                 LazyVGrid(columns: columns, spacing: 12) {
                     MetricCard(
-                        title: "Release RPM",
-                        value: String(format: "%.0f", throwData.releaseRPM),
+                        title: "RPM",
+                        value: String(format: "%.0f", throwData.rpm),
                         unit: "RPM"
                     )
                     MetricCard(
-                        title: "Peak RPM",
-                        value: String(format: "%.0f", throwData.peakRPM),
-                        unit: "RPM"
+                        title: "Peak G",
+                        value: String(format: "%.1f", throwData.peakG),
+                        unit: "g"
                     )
                     MetricCard(
                         title: "Hyzer",
-                        value: String(format: "%.1f", throwData.launchHyzer),
+                        value: String(format: "%.1f", throwData.hyzer),
                         unit: "degrees",
                         tint: .green
                     )
                     MetricCard(
                         title: "Nose Angle",
-                        value: String(format: "%.1f", throwData.launchNose),
+                        value: String(format: "%.1f", throwData.nose),
                         unit: "degrees",
                         tint: .green
                     )
@@ -54,11 +54,6 @@ struct ThrowDetailView: View {
                         value: String(format: "%.1f", throwData.wobble),
                         unit: "degrees",
                         tint: wobbleColor
-                    )
-                    MetricCard(
-                        title: "Peak G",
-                        value: String(format: "%.1f", throwData.peakG),
-                        unit: "g"
                     )
                 }
 

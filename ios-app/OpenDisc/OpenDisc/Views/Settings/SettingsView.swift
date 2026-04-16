@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct SettingsView: View {
     @Environment(BLEManager.self) private var bleManager
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @State private var wifiEnabled: Bool = true
     @State private var settingsLoaded: Bool = false
     @State private var triggerDebounce: Task<Void, Never>?
+    @State private var voice = VoiceSettings.load()
 
     var body: some View {
         NavigationStack {
@@ -37,6 +39,45 @@ struct SettingsView: View {
                                 }
                             }
                     }
+                }
+
+                Section("Voice Callouts") {
+                    Toggle("Enabled", isOn: $voice.enabled)
+
+                    if voice.enabled {
+                        Toggle("Speed (MPH)", isOn: $voice.callMPH)
+                        Toggle("Spin Rate (RPM)", isOn: $voice.callRPM)
+                        Toggle("Hyzer Angle", isOn: $voice.callHyzer)
+                        Toggle("Nose Angle", isOn: $voice.callNose)
+                        Toggle("Wobble", isOn: $voice.callWobble)
+                        Toggle("Peak G-Force", isOn: $voice.callPeakG)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Speech Rate")
+                                Spacer()
+                                Text(speechRateLabel)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $voice.speechRate, in: 0.3...0.65, step: 0.05)
+                        }
+
+                        Button("Test Voice") {
+                            let sample = ThrowResponse(
+                                type: "throw", valid: true,
+                                rpm: 620, mph: 52.3,
+                                peak_g: 45.2, hyzer: 12.5,
+                                nose: -3.2, wobble: 8.1,
+                                duration_ms: 280, release_idx: 0,
+                                motion_start_idx: 0, stationary_end: 0
+                            )
+                            VoiceManager.announceThrow(sample, settings: voice)
+                        }
+                    }
+                }
+                .onChange(of: voice) { _, newValue in
+                    newValue.save()
+                    NotificationCenter.default.post(name: .voiceSettingsChanged, object: nil)
                 }
 
                 Section("Power") {
@@ -92,5 +133,11 @@ struct SettingsView: View {
                 settingsLoaded = true
             }
         }
+    }
+
+    private var speechRateLabel: String {
+        if voice.speechRate < 0.4 { return "Slow" }
+        if voice.speechRate < 0.55 { return "Normal" }
+        return "Fast"
     }
 }
