@@ -139,6 +139,12 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
   Vec3 gyroBias = {0, 0, 0};
   int biasCount = 0;
 
+  // Also track the "quietest" window in case no perfect stationary is found
+  float quietScore[16] = {};  // rolling score for 16-sample windows
+  int quietIdx = 0;
+  float bestQuietScore = 1e9f;
+  int bestQuietEnd = -1;
+
   for (uint16_t i = 0; i < ringSize; i++) {
     const RawSample& s = at(i);
 
@@ -150,14 +156,13 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     float g = accelMagG(s);
     if (g > peakG) peakG = g;
 
-    // Stationary window detection
+    // Stationary window detection (strict)
     if (stationaryEnd < 0) {
       float w = omegaMagDps(s);
       bool still = (w < STATIONARY_OMEGA_DPS) &&
                    (g >= STATIONARY_G_MIN) && (g <= STATIONARY_G_MAX);
       if (still) {
         run++;
-        // Accumulate gyro bias during stationary
         gyroBias.x += s.gx * GYRO_SENS;
         gyroBias.y += s.gy * GYRO_SENS;
         gyroBias.z += s.gz * GYRO_SENS;
@@ -168,8 +173,39 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
         gyroBias = {0,0,0};
         biasCount = 0;
       }
+
+      // Track quietest 16-sample window (fallback if no perfect stationary)
+      if (i < preTrigger) {  // only in pre-trigger region
+        float score = w + fabsf(g - 1.0f) * 100.0f;  // penalize non-1g
+        quietScore[quietIdx % 16] = score;
+        quietIdx++;
+        if (quietIdx >= 16) {
+          float avg = 0;
+          for (int j = 0; j < 16; j++) avg += quietScore[j];
+          avg /= 16.0f;
+          if (avg < bestQuietScore) {
+            bestQuietScore = avg;
+            bestQuietEnd = i;
+          }
+        }
+      }
     } else if (motionStart < 0) {
       if (omegaMagDps(s) > MOTION_START_DPS) motionStart = i;
+    }
+  }
+
+  // Fallback: use quietest 16-sample window if no perfect stationary found
+  if (stationaryEnd < 0 && bestQuietEnd >= 15) {
+    stationaryEnd = bestQuietEnd;
+    // Compute bias from this quieter window
+    gyroBias = {0,0,0};
+    biasCount = 0;
+    for (int i = bestQuietEnd - 15; i <= bestQuietEnd; i++) {
+      const RawSample& s = at(i);
+      gyroBias.x += s.gx * GYRO_SENS;
+      gyroBias.y += s.gy * GYRO_SENS;
+      gyroBias.z += s.gz * GYRO_SENS;
+      biasCount++;
     }
   }
 
@@ -222,10 +258,18 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     const RawSample& rs = at(release);
     m.release_rpm = sampleRpm(rs, cal);
 
-    // Launch angles computed from quaternion in Pass 3 (see below).
-    // Placeholder values overwritten if strapdown succeeds.
-    m.launch_hyzer_deg = 0;
-    m.launch_nose_deg = 0;
+    // Accel-based angles as fallback (centripetal-corrected).
+    // Overwritten by quaternion if strapdown succeeds.
+    {
+      bool clip;
+      Vec3 a = getAccelMs2(rs, &clip);
+      Vec3 w = getGyroRads(rs, gyroBias);
+      float w2 = w.x*w.x + w.y*w.y + w.z*w.z;
+      float ax_c = a.x - w2 * cal.rx;
+      float ay_c = a.y - w2 * cal.ry;
+      m.launch_hyzer_deg = atan2f(ay_c, a.z) * 180.0f / (float)M_PI;
+      m.launch_nose_deg = atan2f(-ax_c, sqrtf(ay_c*ay_c + a.z*a.z)) * 180.0f / (float)M_PI;
+    }
 
     // Wobble: RMS of gx,gy over 100 ms (96 samples) after release
     double wob2 = 0;

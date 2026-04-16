@@ -30,8 +30,8 @@ const char* WIFI_PASS = "goodlife123";
 // ─── Burst capture config ───────────────────────────────────
 #define SAMPLE_HZ      960
 #define SAMPLE_US      (1000000UL / SAMPLE_HZ)
-#define PRE_TRIGGER    384
-#define POST_TRIGGER   768
+#define PRE_TRIGGER    960
+#define POST_TRIGGER   960
 #define RING_SIZE      (PRE_TRIGGER + POST_TRIGGER)
 #define TRIGGER_G_DEFAULT  3.0f
 
