@@ -52,3 +52,40 @@ Pre-trigger and post-trigger both increased to 960 samples (1 second each, 2 sec
 ### Stationary window fallback
 
 If no perfectly still moment exists in the pre-trigger buffer, the analyzer now uses the quietest 16-sample window it can find. Indoor/quick throws should now produce MPH values instead of returning -1.
+
+### New: `dump_raw` command for training data
+
+Send `{"cmd":"dump_raw"}` after a throw to stream the full 1920-sample ring buffer (960 Hz, 2 seconds) over BLE. Each sample arrives as a separate notification:
+
+```json
+{"type":"dump","status":"start","samples":1920}
+{"type":"d","i":-960,"ax":26,"ay":-16,"az":2071,"gx":-1,"gy":2,"gz":-3,"hx":0,"hy":0,"hz":0}
+{"type":"d","i":-959, ...}
+...
+{"type":"d","i":959, ...}
+{"type":"dump","status":"done"}
+```
+
+`i` is the sample index relative to trigger (negative = pre-trigger). Takes about 5-10 seconds over BLE. Store alongside throw tags for building training datasets.
+
+If no throw has been captured, returns `{"type":"dump","status":"no_throw"}`.
+
+### iOS TODO: hyzer sign convention for left-handed throwers
+
+The firmware reports hyzer as positive when the left edge of the disc is lower (looking from behind in the flight direction). This matches the conventional "hyzer" label for RHBH throws.
+
+For LHBH throwers, the same physical tilt is conventionally called "anhyzer." The firmware number is still physically correct, just the label is inverted.
+
+Suggested app behavior: add a handedness setting (RH/LH). For LH, negate the hyzer value before displaying and swap the hyzer/anhyzer labels. The raw data stays the same.
+
+### iOS TODO: throw tagging for training data
+
+After each throw detection, show a tag picker so the user can label the throw:
+- "Good throw"
+- "Not a throw" (false trigger)
+- "Edge case"
+- Custom text label
+
+Store tags locally alongside throw metrics. Add an "Export dataset" option that dumps all tagged throws as JSON. Optionally pull the raw burst via `dump_raw` for throws the user flags as interesting.
+
+This data is for improving release detection, tuning thresholds, and eventually training a classifier to auto-reject bad detections.

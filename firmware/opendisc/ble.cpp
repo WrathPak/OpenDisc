@@ -372,6 +372,41 @@ void bleHandleCommand(const char* json) {
     debugMsg("WiFi enabled by BLE client");
     bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi on.\"}");
 
+  } else if (strcmp(cmd, "dump_raw") == 0) {
+    // Stream the full ring buffer as chunked JSON lines
+    extern RawSample ring[];
+    extern uint16_t triggerIndex;
+    #define EXT_PRE_TRIGGER 960
+    #define EXT_POST_TRIGGER 960
+    #define EXT_RING_SIZE (EXT_PRE_TRIGGER + EXT_POST_TRIGGER)
+
+    if (!hasLastThrow) {
+      bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
+    } else {
+      uint16_t ringSize = EXT_RING_SIZE;
+      uint16_t start = (triggerIndex + ringSize - EXT_PRE_TRIGGER) % ringSize;
+      debugMsg("dump_raw: %d samples starting", ringSize);
+      bleSendJson("{\"type\":\"dump\",\"status\":\"start\",\"samples\":1920}");
+      delay(10);
+
+      // Send in chunks of 10 samples to stay within BLE throughput
+      for (uint16_t i = 0; i < ringSize; i++) {
+        uint16_t idx = (start + i) % ringSize;
+        const RawSample& s = ring[idx];
+        int sn = (int)i - (int)EXT_PRE_TRIGGER;
+        char line[200];
+        snprintf(line, sizeof(line),
+          "{\"type\":\"d\",\"i\":%d,\"ax\":%d,\"ay\":%d,\"az\":%d,"
+          "\"gx\":%d,\"gy\":%d,\"gz\":%d,"
+          "\"hx\":%d,\"hy\":%d,\"hz\":%d}",
+          sn, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, s.hx, s.hy, s.hz);
+        bleSendJson(line);
+        if (i % 10 == 9) delay(5);  // pace for BLE throughput
+      }
+      bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
+      debugMsg("dump_raw: complete");
+    }
+
   } else if (strcmp(cmd, "imudiag") == 0) {
     ImuDiag d = readImuDiag();
     char buf[300];

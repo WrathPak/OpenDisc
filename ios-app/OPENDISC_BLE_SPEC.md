@@ -338,6 +338,36 @@ Disabling WiFi saves significant battery (~100 mA). WiFi auto-restores 5 minutes
 
 WiFi is always on at boot. It only turns off when a BLE client explicitly requests it. If the BLE client disconnects while WiFi is off, WiFi automatically comes back after 5 minutes.
 
+### 3.9 `dump_raw` — Raw Burst Data for Training
+
+Streams the full ring buffer from the most recent capture. 1920 samples at 960 Hz (1s pre-trigger + 1s post-trigger). Each sample is a separate TX notification.
+
+**Request:**
+```json
+{"cmd":"dump_raw"}
+```
+
+**Response sequence:**
+```json
+{"type":"dump","status":"start","samples":1920}
+{"type":"d","i":-960,"ax":26,"ay":-16,"az":2071,"gx":-1,"gy":2,"gz":-3,"hx":0,"hy":0,"hz":0}
+{"type":"d","i":-959,...}
+...
+{"type":"d","i":959,...}
+{"type":"dump","status":"done"}
+```
+
+| Field | Description |
+|---|---|
+| `i` | Sample index relative to trigger. Negative = pre-trigger. |
+| `ax/ay/az` | Raw 16-bit accelerometer (main, +-16g) |
+| `gx/gy/gz` | Raw 16-bit gyroscope (+-2000 dps) |
+| `hx/hy/hz` | Raw 16-bit high-G accelerometer (+-320g) |
+
+Takes 5-10 seconds over BLE. Returns `{"type":"dump","status":"no_throw"}` if no capture exists.
+
+To convert raw values: multiply by `GYRO_SENS=0.070` for dps, `ACCEL_SENS=0.000488` for g, `HG_SENS=0.00977` for g.
+
 ---
 
 ## 4. Device State Machine
