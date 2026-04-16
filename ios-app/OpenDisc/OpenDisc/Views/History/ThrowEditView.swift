@@ -21,6 +21,11 @@ struct ThrowEditView: View {
                             Text(hand == .right ? "Right Hand" : "Left Hand").tag(hand)
                         }
                     }
+                    .onChange(of: selectedHand) { oldHand, newHand in
+                        if oldHand != newHand {
+                            throwData.toggleHand(to: newHand)
+                        }
+                    }
                     Picker("Type", selection: $selectedType) {
                         ForEach(ThrowType.allCases, id: \.self) { type in
                             Text(type.rawValue).tag(type)
@@ -72,7 +77,7 @@ struct ThrowEditView: View {
                         throwData.notes = notes
                         throwData.tag = selectedTag.rawValue
                         throwData.throwType = selectedType.rawValue
-                        throwData.throwHand = selectedHand.rawValue
+                        // hand is already updated via toggleHand onChange
                         dismiss()
                     }
                 }

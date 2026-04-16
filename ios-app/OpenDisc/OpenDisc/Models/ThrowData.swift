@@ -27,7 +27,7 @@ final class ThrowData {
     var mph: Float
     var rpm: Float
     var peakG: Float
-    var hyzer: Float       // raw from device (always RHBH convention)
+    var hyzer: Float       // stored already flipped for handedness at record time
     var nose: Float
     var wobble: Float
     var durationMS: Int
@@ -38,12 +38,6 @@ final class ThrowData {
     var throwHand: String  // ThrowHand raw value
     var disc: Disc?
 
-    /// Hyzer adjusted for handedness. LH flips the sign.
-    var adjustedHyzer: Float {
-        let hand = ThrowHand(rawValue: throwHand) ?? .right
-        return hand.isLeft ? -hyzer : hyzer
-    }
-
     var displayMPH: String {
         mph < 0 ? "--" : String(format: "%.1f", mph)
     }
@@ -53,15 +47,23 @@ final class ThrowData {
     }
 
     var displayHyzer: String {
-        let h = adjustedHyzer
-        let label = h >= 0 ? "hyzer" : "anhy"
-        return String(format: "%.1f\u{00B0} %@", abs(h), label)
+        let label = hyzer >= 0 ? "hyzer" : "anhy"
+        return String(format: "%.1f\u{00B0} %@", abs(hyzer), label)
     }
 
     var displayThrowType: String {
         let type = ThrowType(rawValue: throwType) ?? .backhand
         let hand = ThrowHand(rawValue: throwHand) ?? .right
         return "\(hand.rawValue) \(type.rawValue)"
+    }
+
+    /// Call when changing throwHand on an existing throw to re-flip hyzer.
+    func toggleHand(to newHand: ThrowHand) {
+        let currentHand = ThrowHand(rawValue: throwHand) ?? .right
+        if currentHand != newHand {
+            hyzer = -hyzer
+            throwHand = newHand.rawValue
+        }
     }
 
     init(timestamp: Date, mph: Float, rpm: Float, peakG: Float,
@@ -73,7 +75,8 @@ final class ThrowData {
         self.mph = mph
         self.rpm = rpm
         self.peakG = peakG
-        self.hyzer = hyzer
+        // Flip hyzer at record time for LH
+        self.hyzer = throwHand.isLeft ? -hyzer : hyzer
         self.nose = nose
         self.wobble = wobble
         self.durationMS = durationMS

@@ -65,8 +65,8 @@ struct ThrowDetailView: View {
                         unit: "g"
                     )
                     MetricCard(
-                        title: throwData.adjustedHyzer >= 0 ? "Hyzer" : "Anhyzer",
-                        value: String(format: "%.1f", abs(throwData.adjustedHyzer)),
+                        title: throwData.hyzer >= 0 ? "Hyzer" : "Anhyzer",
+                        value: String(format: "%.1f", abs(throwData.hyzer)),
                         unit: "degrees",
                         tint: .green
                     )
