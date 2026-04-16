@@ -89,3 +89,45 @@ After each throw detection, show a tag picker so the user can label the throw:
 Store tags locally alongside throw metrics. Add an "Export dataset" option that dumps all tagged throws as JSON. Optionally pull the raw burst via `dump_raw` for throws the user flags as interesting.
 
 This data is for improving release detection, tuning thresholds, and eventually training a classifier to auto-reject bad detections.
+
+### 4000 dps gyro unlocked!
+
+GYRO_SENS changed from 0.070 to 0.140 (140 mdps/LSB). Gyro ceiling is now 666 RPM instead of 333. The `dump_raw` gyro values now need to be multiplied by 0.140 (not 0.070) for dps. Update any raw data conversion constants in the app.
+
+The fix was CTRL6 = 0x0D instead of 0x05. Bit 3 of CTRL6 defaults to 1 and must stay 1 for 4000 dps to work. ST's driver has a bug where it uses 0x5 which clears this bit.
+
+### iOS TODO: 3D throw trajectory visualization
+
+The `dump_raw` data contains everything needed to reconstruct the disc's 3D path through space during the throw. Implementation:
+
+1. Pull raw burst via `{"cmd":"dump_raw"}` (1920 samples, 960 Hz, 2 seconds)
+2. Run strapdown inertial integration on the phone:
+   - Find the quietest window in the pre-trigger samples as stationary reference
+   - Initialize orientation quaternion from gravity direction
+   - For each sample forward:
+     - Integrate gyro to update quaternion: `q = q * deltaQ(omega, dt)`
+     - Rotate body-frame accel to world frame: `a_world = R(q) * a_body`
+     - Subtract gravity: `a_world.z -= 9.81`
+     - Subtract centripetal: `a_body -= omega^2 * (cal_rx, cal_ry, 0)` (before rotation)
+     - Integrate velocity: `v += a_world * dt`
+     - Integrate position: `p += v * dt`
+3. Output: arrays of `(position, orientation, velocity)` at each timestep
+
+Raw-to-physical conversion constants:
+- Gyro: `raw * 0.140` = degrees/sec (multiply by pi/180 for rad/s)
+- Accel: `raw * 0.000488` = g (multiply by 9.81 for m/s²)
+- HG accel: `raw * 0.00977` = g
+- Use HG accel when any main accel axis `|raw| > 32000`
+- Sample rate: 960 Hz, dt = 1/960 s
+- Sample index `i` is relative to trigger. Negative = pre-trigger.
+
+Visualization ideas:
+- SceneKit or RealityKit 3D path with a disc model at each keyframe
+- Color the path by speed (blue=slow, red=fast)
+- Show disc orientation as a flat disc model tilted at each point
+- Mark the release point (where accel drops to ~1g)
+- Mark the stationary reference point (start of integration)
+- Overlay: reach-back distance, release height, launch angle arc
+- Compare multiple throws by overlaying trajectories
+
+Drift note: position accuracy degrades with double integration. Over a 1-second throw window expect ±10-20 cm of drift by the end. Good enough for form visualization and throw comparison, not for absolute distance measurement.
