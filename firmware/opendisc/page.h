@@ -118,7 +118,27 @@ This enables accurate MPH, RPM above 333, and throw analysis.</p>
 </div>
 <label>Trigger threshold <span class="val-readout" id="trgVal">3.0 g</span></label>
 <input type="range" id="optTrigger" min="1.5" max="8" step="0.1" value="3.0">
-<label style="margin-top:14px">IMU diagnostic</label>
+<label style="margin-top:14px">Gyro FS experiment</label>
+<div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+  <select id="fsSelect" style="background:#222;color:#ccc;border:1px solid #444;padding:4px 8px;border-radius:4px;font-size:13px">
+    <option value="0">0 (125 dps?)</option>
+    <option value="1">1 (250 dps)</option>
+    <option value="2">2 (500 dps)</option>
+    <option value="3">3 (1000 dps)</option>
+    <option value="4" selected>4 (2000 dps)</option>
+    <option value="5">5 (4000 dps? - WRONG per ST fix)</option>
+    <option value="6">6 (reserved)</option>
+    <option value="7">7 (reserved)</option>
+    <option value="12">0xC (4000 dps - per ST fix)</option>
+    <option value="13">0xD (FS_G=5 + bit3=1 preserved!)</option>
+    <option value="99">CTRL2=0x4C (datasheet method)</option>
+  </select>
+  <button class="secondary" style="width:auto;padding:6px 12px;margin:0" onclick="setFsG()">Write CTRL6</button>
+</div>
+<p style="font-size:11px;color:#666;margin-bottom:4px">Do a slow 10s hand rotation after each change. If gz_dps reads ~36, the FS is working at that range. Reading ~72 means still 2000 dps.</p>
+<button class="secondary" style="margin:4px 0;width:auto;padding:6px 12px" onclick="eisTest()">Test EIS 4000 dps channel</button>
+<pre id="eisResult" style="font-family:monospace;font-size:10px;background:#0a0a0a;padding:4px;border-radius:4px;color:#888;margin:4px 0;display:none"></pre>
+<label style="margin-top:8px">IMU diagnostic</label>
 <pre id="imuDiag" style="font-family:monospace;font-size:11px;background:#0a0a0a;padding:8px;border-radius:6px;color:#888;white-space:pre-wrap;margin:4px 0">loading...</pre>
 <div class="row">
   <button onclick="saveSettings()">Save</button>
@@ -215,11 +235,16 @@ async function poll() {
 
     if (d.raw_ax !== undefined) {
       const p = (v, w) => String(v).padStart(w);
+      const hxg = d.raw_hx !== undefined ? (d.raw_hx*0.00977).toFixed(2) : '?';
+      const hyg = d.raw_hy !== undefined ? (d.raw_hy*0.00977).toFixed(2) : '?';
+      const hzg = d.raw_hz !== undefined ? (d.raw_hz*0.00977).toFixed(2) : '?';
       $('rawDump').textContent =
-        'raw ax=' + p(d.raw_ax,7) + '  ay=' + p(d.raw_ay,7) + '  az=' + p(d.raw_az,7) + '\n' +
-        '    gx=' + p(d.raw_gx,7) + '  gy=' + p(d.raw_gy,7) + '  gz=' + p(d.raw_gz,7) + '\n' +
+        'accel  ax=' + p(d.raw_ax,7) + '  ay=' + p(d.raw_ay,7) + '  az=' + p(d.raw_az,7) + '\n' +
+        'hi-g   hx=' + p(d.raw_hx||0,7) + '  hy=' + p(d.raw_hy||0,7) + '  hz=' + p(d.raw_hz||0,7) + '\n' +
+        'gyro   gx=' + p(d.raw_gx,7) + '  gy=' + p(d.raw_gy,7) + '  gz=' + p(d.raw_gz,7) + '\n' +
         'ax_g=' + d.ax_g.toFixed(3) + '  ay_g=' + d.ay_g.toFixed(3) + '  az_g=' + d.az_g.toFixed(3) +
         '  (|xy|=' + Math.sqrt(d.ax_g*d.ax_g + d.ay_g*d.ay_g).toFixed(3) + 'g)\n' +
+        'hx_g=' + hxg + '  hy_g=' + hyg + '  hz_g=' + hzg + '\n' +
         'gz_dps=' + d.gz_dps.toFixed(0) + '  rpm_gyro=' + d.rpm_gyro.toFixed(0);
     }
 
@@ -575,6 +600,44 @@ async function refreshImuDiag() {
   } catch (e) {
     el.textContent = 'diag error: ' + e.message;
   }
+}
+
+async function eisTest() {
+  const el = $('eisResult');
+  el.style.display = 'block';
+  el.textContent = 'testing... rotate the board slowly while this runs';
+  try {
+    // Take 5 readings over 2 seconds while user rotates
+    let results = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await fetch('/api/eis_test', {cache: 'no-store'});
+      const d = await r.json();
+      results.push(d);
+      await new Promise(r => setTimeout(r, 400));
+    }
+    let txt = 'CTRL_EIS: ' + results[0].eis_ctrl + '\n\n';
+    txt += 'sample | main_gz (raw) | eis_gz (raw) | ratio | main@70mdps | eis@140mdps\n';
+    for (const d of results) {
+      txt += '       | ' + String(d.main_gz).padStart(13) + ' | ' +
+             String(d.eis_gz).padStart(12) + ' | ' +
+             d.ratio.toFixed(3).padStart(5) + ' | ' +
+             d.main_gz_dps.toFixed(1).padStart(11) + ' | ' +
+             d.eis_gz_dps_at4000.toFixed(1).padStart(11) + '\n';
+    }
+    txt += '\nIf ratio ~0.5 and eis@140 matches main@70, EIS is at 4000 dps!';
+    txt += '\nIf ratio ~1.0, EIS is also stuck at 2000 dps.';
+    el.textContent = txt;
+  } catch(e) { el.textContent = 'error: ' + e.message; }
+}
+
+async function setFsG() {
+  const val = $('fsSelect').value;
+  try {
+    const r = await fetch('/api/setfsg?v=' + val, {cache: 'no-store'});
+    const d = await r.json();
+    log('CTRL6 written: 0x' + parseInt(val).toString(16).padStart(2,'0') + ' -> readback ' + d.ctrl6 + ' (fs_g=' + d.fs_g + ')');
+    refreshImuDiag();
+  } catch (e) { log('setfsg error: ' + e.message); }
 }
 
 function openSettings() {

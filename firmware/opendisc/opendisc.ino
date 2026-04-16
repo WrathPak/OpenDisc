@@ -174,6 +174,8 @@ void setup() {
   server.on("/api/imudiag", handleImuDiag);
   server.on("/api/debuglog", handleDebugLog);
   server.on("/api/caldump", handleCalDump);
+  server.on("/api/setfsg", handleSetFsG);
+  server.on("/api/eis_test", handleEisTest);
   server.on("/api/cal/start", handleCalStart);
   server.on("/api/cal/stop", handleCalStop);
   server.begin();
@@ -675,6 +677,92 @@ void handleSettings() {
   server.send(200, "application/json", buf);
 }
 
+void handleEisTest() {
+  // Enable EIS gyro at 4000 dps, route to OIS output registers
+  // CTRL_EIS (0x6B):
+  //   [2:0] fs_g_eis = 5 (4000 dps per enum)
+  //   [3]   g_eis_on_g_ois_out_reg = 1 (route EIS to OIS output regs)
+  //   [4]   lpf_g_eis_bw = 0
+  //   [5]   reserved = 0
+  //   [7:6] odr_g_eis = 10 (960 Hz)
+  #define CTRL_EIS 0x6B
+  #define OUTX_L_G_OIS_EIS 0x2E
+
+  // Also set main UI FS to 5 (required per ST docs for EIS 4000)
+  writeReg(IMU_ADDR, CTRL2, 0x00); delay(10);
+  writeReg(IMU_ADDR, CTRL6, 0x05); delay(10);
+  writeReg(IMU_ADDR, CTRL2, 0x09); delay(10);
+
+  // Enable EIS: fs_g_eis=5, route_to_ois=1, odr=960Hz
+  // 10_0_0_1_101 = 0x8D
+  writeReg(IMU_ADDR, CTRL_EIS, 0x8D);
+  delay(50);
+
+  uint8_t eis_reg = readReg(IMU_ADDR, CTRL_EIS);
+
+  // Read main gyro (0x22) and EIS gyro (0x2E) simultaneously
+  uint8_t main_buf[6], eis_buf[6];
+  readRegs(IMU_ADDR, OUTX_L_G, main_buf, 6);
+  readRegs(IMU_ADDR, OUTX_L_G_OIS_EIS, eis_buf, 6);
+
+  int16_t main_gz = (int16_t)(main_buf[5] << 8 | main_buf[4]);
+  int16_t eis_gz = (int16_t)(eis_buf[5] << 8 | eis_buf[4]);
+  int16_t main_gx = (int16_t)(main_buf[1] << 8 | main_buf[0]);
+  int16_t eis_gx = (int16_t)(eis_buf[1] << 8 | eis_buf[0]);
+
+  char buf[300];
+  snprintf(buf, sizeof(buf),
+    "{\"eis_ctrl\":\"0x%02X\",\"main_gz\":%d,\"eis_gz\":%d,"
+    "\"main_gx\":%d,\"eis_gx\":%d,"
+    "\"main_gz_dps\":%.1f,\"eis_gz_dps_at2000\":%.1f,\"eis_gz_dps_at4000\":%.1f,"
+    "\"ratio\":%.3f}",
+    eis_reg, main_gz, eis_gz, main_gx, eis_gx,
+    main_gz * 0.070f, eis_gz * 0.070f, eis_gz * 0.140f,
+    (main_gz != 0) ? (float)eis_gz / main_gz : 0.0f);
+  debugMsg("EIS test: main_gz=%d eis_gz=%d ratio=%.3f", main_gz, eis_gz,
+    (main_gz != 0) ? (float)eis_gz / main_gz : 0.0f);
+  server.send(200, "application/json", buf);
+}
+
+void handleSetFsG() {
+  if (!server.hasArg("v")) {
+    server.send(400, "application/json", "{\"error\":\"need ?v=0-7\"}");
+    return;
+  }
+  int rawVal = server.arg("v").toInt();
+
+  if (rawVal == 99) {
+    // Special: write 0x4C directly to CTRL2 (datasheet method)
+    // This puts FS_G bits in CTRL2 like the older LSM6DSL layout
+    writeReg(IMU_ADDR, CTRL2, 0x00); delay(10);  // power down
+    writeReg(IMU_ADDR, CTRL2, 0x4C); delay(10);  // 0x4C per datasheet
+    uint8_t rb2 = readReg(IMU_ADDR, CTRL2);
+    uint8_t rb6 = readReg(IMU_ADDR, CTRL6);
+    char buf[150];
+    snprintf(buf, sizeof(buf),
+      "{\"method\":\"ctrl2_direct\",\"ctrl2\":\"0x%02X\",\"ctrl6\":\"0x%02X\"}", rb2, rb6);
+    debugMsg("CTRL2 direct write 0x4C, readback CTRL2=0x%02X CTRL6=0x%02X", rb2, rb6);
+    server.send(200, "application/json", buf);
+    return;
+  }
+
+  uint8_t val = rawVal & 0x0F;
+  // Power down gyro, write FS to CTRL6, power back up
+  writeReg(IMU_ADDR, CTRL2, 0x00);
+  delay(10);
+  writeReg(IMU_ADDR, CTRL6, val);
+  delay(10);
+  writeReg(IMU_ADDR, CTRL2, 0x09);
+  delay(10);
+  uint8_t readback = readReg(IMU_ADDR, CTRL6);
+  char buf[100];
+  snprintf(buf, sizeof(buf),
+    "{\"wrote\":\"0x%02X\",\"ctrl6\":\"0x%02X\",\"fs_g\":%d}",
+    val, readback, readback & 0x0F);
+  debugMsg("FS_G set to %d, readback 0x%02X", val, readback);
+  server.send(200, "application/json", buf);
+}
+
 void handleCalStart() {
   calCount = 0;
   calRpmMin = 9999;
@@ -732,6 +820,7 @@ void handleLive() {
     "\"radius\":%.6f,"
     "\"raw_ax\":%d,\"raw_ay\":%d,\"raw_az\":%d,"
     "\"raw_gx\":%d,\"raw_gy\":%d,\"raw_gz\":%d,"
+    "\"raw_hx\":%d,\"raw_hy\":%d,\"raw_hz\":%d,"
     "\"ax_g\":%.3f,\"ay_g\":%.3f,\"az_g\":%.3f,"
     "\"gx_dps\":%.1f,\"gy_dps\":%.1f,\"gz_dps\":%.1f}",
     liveRpmGyro, liveRpmAccel,
@@ -742,6 +831,7 @@ void handleLive() {
     calCount, rpmMin, calRpmMax,
     calRadius,
     live.ax, live.ay, live.az, live.gx, live.gy, live.gz,
+    live.hx, live.hy, live.hz,
     ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps);
   server.sendHeader("Cache-Control", "no-store");
   server.send(200, "application/json", buf);

@@ -12,7 +12,7 @@
 #define RELEASE_HOLD_SAMPLES   8
 #define RELEASE_MIN_SPIN_DPS   60.0f
 #define MAIN_ACCEL_CLIP_RAW    32000
-#define GYRO_CLIP_RAW          28000    // ~1960 dps at 70 mdps/LSB ≈ 327 RPM
+#define GYRO_CLIP_RAW          28000    // ~3920 dps at 140 mdps/LSB ≈ 653 RPM
 #define SAMPLE_DT_S            (1.0f / 960.0f)
 #define GRAVITY_MS2            9.80665f
 

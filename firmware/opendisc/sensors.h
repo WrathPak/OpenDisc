@@ -32,12 +32,10 @@
 #define MAG_OUT_X_L    0x28
 
 // Sensitivities
-// LSM6DSV320X empirically caps at ±2000 dps — neither HP mode + CTRL6=0x5
-// nor HA mode + CTRL6=0x5 unlocks 4000 dps, even though ST's driver claims
-// 0x5 should give 4000 dps. Verified with 6 RPM hand rotation test: chip
-// reports 2x expected rate when GYRO_SENS=0.140. So we stick with 2000 dps.
-// Gyro ceiling = 333 RPM; above that, throw analyzer uses accel-derived RPM.
-#define GYRO_SENS    0.070f     // ±2000 dps → 70 mdps/LSB
+// LSM6DSV320X ±4000 dps: CTRL6 = 0x0D (FS_G=5 with bit3 preserved at default 1).
+// ST's driver enum says 0x5 but that clears bit 3 which silently caps at 2000.
+// Gyro ceiling = 666 RPM.
+#define GYRO_SENS    0.140f     // ±4000 dps → 140 mdps/LSB
 #define ACCEL_SENS   0.000488f  // ±16g → 0.488 mg/LSB
 #define HG_SENS      0.00977f
 #define MAG_SENS     (1.0f / 6842.0f)

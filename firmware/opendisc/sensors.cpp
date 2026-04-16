@@ -47,15 +47,15 @@ bool scanAndVerify() {
 }
 
 bool initIMU() {
-  // LSM6DSV320X register layouts (per ST driver lsm6dsv320x_reg.h):
-  //   CTRL1 / CTRL2: [3:0]=ODR (0x9=960Hz), [6:4]=OP_MODE (0=HP)
-  //   CTRL6:         [3:0]=FS_G (0x5=±4000dps on 320X, NOT 0xC!)
-  //   CTRL8:         [1:0]=FS_XL (0x3=±16g)
-  //   CTRL1_XL_HG:   [2:0]=FS_HG (0x4=320g), [5:3]=ODR_HG (0x4=960Hz), [7]=regout_en
+  // LSM6DSV320X register config:
+  //   CTRL1/CTRL2: [3:0]=ODR (0x9=960Hz), [6:4]=OP_MODE (0=HP)
+  //   CTRL6: [2:0]=FS_G, [3]=must be 1 (default), [6:4]=LPF1_G_BW
+  //          Write 0x0D for ±4000 dps (FS_G=5 + bit3 preserved)
+  //          ST driver bug: enum says 0x5 but that clears bit3, capping at 2000
+  //   CTRL8: [1:0]=FS_XL (0x3=±16g)
+  //   CTRL1_XL_HG: [2:0]=FS_HG, [5:3]=ODR_HG, [7]=regout_en
   //
-  // CRITICAL: FS_G can only be changed while the gyro is in power-down mode
-  // (ODR_G=0). The ST driver reads CTRL2, forces ODR_G=0, writes CTRL6, then
-  // restores CTRL2. We do the same sequence below.
+  // FS_G change requires gyro power-down (ODR_G=0) first.
 
   writeReg(IMU_ADDR, CTRL3, 0x44);           // BDU + IF_INC
   delay(10);
@@ -69,7 +69,7 @@ bool initIMU() {
   // Gyro FS change requires power-down first
   writeReg(IMU_ADDR, CTRL2, 0x00);           // power down to change FS
   delay(10);
-  writeReg(IMU_ADDR, CTRL6, 0x04);           // FS_G=±2000 dps (silicon caps here)
+  writeReg(IMU_ADDR, CTRL6, 0x0D);           // FS_G=5 (±4000 dps) + bit3=1
   delay(10);
   writeReg(IMU_ADDR, CTRL2, 0x09);           // ODR_G=0x9 (960Hz), OP_MODE_G=HP
   delay(10);
