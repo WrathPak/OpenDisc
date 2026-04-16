@@ -6,13 +6,19 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var voiceSettings = VoiceSettings.load()
     @State private var selectedDisc: Disc?
+    @State private var throwType: ThrowType = AppSettings.load().defaultThrowType
+    @State private var throwHand: ThrowHand = AppSettings.load().defaultThrowHand
 
     var body: some View {
         TabView {
-            DashboardView(selectedDisc: $selectedDisc)
-                .tabItem {
-                    Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
-                }
+            DashboardView(
+                selectedDisc: $selectedDisc,
+                throwType: $throwType,
+                throwHand: $throwHand
+            )
+            .tabItem {
+                Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
+            }
 
             HistoryView()
                 .tabItem {
@@ -62,7 +68,9 @@ struct ContentView: View {
             wobble: response.wobble,
             durationMS: response.duration_ms,
             isValid: response.valid,
-            disc: selectedDisc
+            disc: selectedDisc,
+            throwType: throwType,
+            throwHand: throwHand
         )
         modelContext.insert(throwData)
         try? modelContext.save()

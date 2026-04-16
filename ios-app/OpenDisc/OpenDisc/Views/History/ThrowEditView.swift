@@ -8,11 +8,26 @@ struct ThrowEditView: View {
     @Bindable var throwData: ThrowData
     @State private var notes: String = ""
     @State private var selectedTag: ThrowTag = .none
+    @State private var selectedType: ThrowType = .backhand
+    @State private var selectedHand: ThrowHand = .right
     @State private var showingAddDisc = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Throw Type") {
+                    Picker("Hand", selection: $selectedHand) {
+                        ForEach(ThrowHand.allCases, id: \.self) { hand in
+                            Text(hand == .right ? "Right Hand" : "Left Hand").tag(hand)
+                        }
+                    }
+                    Picker("Type", selection: $selectedType) {
+                        ForEach(ThrowType.allCases, id: \.self) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                }
+
                 Section("Disc") {
                     Picker("Disc", selection: $throwData.disc) {
                         Text("None").tag(nil as Disc?)
@@ -56,6 +71,8 @@ struct ThrowEditView: View {
                     Button("Done") {
                         throwData.notes = notes
                         throwData.tag = selectedTag.rawValue
+                        throwData.throwType = selectedType.rawValue
+                        throwData.throwHand = selectedHand.rawValue
                         dismiss()
                     }
                 }
@@ -63,6 +80,8 @@ struct ThrowEditView: View {
             .onAppear {
                 notes = throwData.notes
                 selectedTag = ThrowTag(rawValue: throwData.tag) ?? .none
+                selectedType = ThrowType(rawValue: throwData.throwType) ?? .backhand
+                selectedHand = ThrowHand(rawValue: throwData.throwHand) ?? .right
             }
             .sheet(isPresented: $showingAddDisc) {
                 DiscFormView()

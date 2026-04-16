@@ -12,23 +12,29 @@ struct ThrowDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // Disc + tag
-                if throwData.disc != nil || throwData.tag != ThrowTag.none.rawValue {
-                    HStack(spacing: 12) {
-                        if let disc = throwData.disc {
-                            Label(disc.displayName, systemImage: "opticaldisc")
-                                .font(.subheadline)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .glassEffect(.regular.tint(.accentColor.opacity(0.2)))
-                        }
-                        if throwData.tag != ThrowTag.none.rawValue {
-                            Text(throwData.tag)
-                                .font(.caption)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .glassEffect(.regular.tint(.purple.opacity(0.2)))
-                        }
+                // Throw info badges
+                HStack(spacing: 8) {
+                    Text(throwData.displayThrowType)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular.tint(.orange.opacity(0.2)))
+
+                    if let disc = throwData.disc {
+                        Label(disc.displayName, systemImage: "opticaldisc")
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(.regular.tint(.accentColor.opacity(0.2)))
+                    }
+
+                    if throwData.tag != ThrowTag.none.rawValue {
+                        Text(throwData.tag)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(.regular.tint(.purple.opacity(0.2)))
                     }
                 }
 
@@ -59,8 +65,8 @@ struct ThrowDetailView: View {
                         unit: "g"
                     )
                     MetricCard(
-                        title: "Hyzer",
-                        value: String(format: "%.1f", throwData.hyzer),
+                        title: throwData.adjustedHyzer >= 0 ? "Hyzer" : "Anhyzer",
+                        value: String(format: "%.1f", abs(throwData.adjustedHyzer)),
                         unit: "degrees",
                         tint: .green
                     )

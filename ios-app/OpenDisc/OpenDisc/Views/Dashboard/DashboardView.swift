@@ -3,6 +3,8 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(BLEManager.self) private var bleManager
     @Binding var selectedDisc: Disc?
+    @Binding var throwType: ThrowType
+    @Binding var throwHand: ThrowHand
 
     var body: some View {
         NavigationStack {
@@ -13,7 +15,12 @@ struct DashboardView: View {
                         deviceState: bleManager.deviceState
                     )
 
-                    DiscPicker(selectedDisc: $selectedDisc)
+                    // Throw config selectors
+                    HStack(spacing: 12) {
+                        DiscPicker(selectedDisc: $selectedDisc)
+                        Spacer()
+                        ThrowTypePicker(throwType: $throwType, throwHand: $throwHand)
+                    }
 
                     SpeedDisplay(mph: bleManager.lastThrow?.mph)
 

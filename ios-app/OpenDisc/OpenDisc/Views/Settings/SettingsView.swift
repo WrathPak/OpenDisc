@@ -14,19 +14,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Player") {
-                    Picker("Throwing Hand", selection: $appSettings.handedness) {
-                        ForEach(Handedness.allCases, id: \.self) { h in
-                            Text(h.rawValue).tag(h)
+                Section("Player Defaults") {
+                    Picker("Default Hand", selection: $appSettings.defaultThrowHand) {
+                        ForEach(ThrowHand.allCases, id: \.self) { h in
+                            Text(h == .right ? "Right Hand" : "Left Hand").tag(h)
                         }
                     }
-                    .onChange(of: appSettings.handedness) { _, _ in
-                        appSettings.save()
+
+                    Picker("Default Throw", selection: $appSettings.defaultThrowType) {
+                        ForEach(ThrowType.allCases, id: \.self) { t in
+                            Text(t.rawValue).tag(t)
+                        }
                     }
 
                     NavigationLink("My Discs") {
                         DiscsView()
                     }
+                }
+                .onChange(of: appSettings) { _, _ in
+                    appSettings.save()
                 }
 
                 Section("Throw Detection") {

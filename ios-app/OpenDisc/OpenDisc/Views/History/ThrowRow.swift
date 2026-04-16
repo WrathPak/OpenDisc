@@ -18,6 +18,9 @@ struct ThrowRow: View {
                             .font(.caption)
                             .foregroundStyle(Color.accentColor)
                     }
+                    Text(throwData.displayThrowType)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
