@@ -1,0 +1,10 @@
+build/
+*.o
+*.elf
+*.bin
+*.map
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.claude/
