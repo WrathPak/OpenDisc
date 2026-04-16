@@ -1,7 +1,10 @@
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
     @Environment(BLEManager.self) private var bleManager
+    @Environment(\.modelContext) private var modelContext
+    @State private var voiceSettings = VoiceSettings.load()
 
     var body: some View {
         TabView {
@@ -28,6 +31,15 @@ struct ContentView: View {
         .fullScreenCover(isPresented: showScan) {
             ScanView()
         }
+        .onChange(of: bleManager.throwCount) { _, _ in
+            saveThrow()
+            if let response = bleManager.lastThrow {
+                VoiceManager.announceThrow(response, settings: voiceSettings)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceSettingsChanged)) { _ in
+            voiceSettings = VoiceSettings.load()
+        }
     }
 
     private var showScan: Binding<Bool> {
@@ -35,5 +47,22 @@ struct ContentView: View {
             get: { bleManager.connectedPeripheral == nil && bleManager.connectionState != .reconnecting },
             set: { _ in }
         )
+    }
+
+    private func saveThrow() {
+        guard let response = bleManager.lastThrow, response.valid else { return }
+        let throwData = ThrowData(
+            timestamp: Date(),
+            mph: response.mph,
+            rpm: response.rpm,
+            peakG: response.peak_g,
+            hyzer: response.hyzer,
+            nose: response.nose,
+            wobble: response.wobble,
+            durationMS: response.duration_ms,
+            isValid: response.valid
+        )
+        modelContext.insert(throwData)
+        try? modelContext.save()
     }
 }

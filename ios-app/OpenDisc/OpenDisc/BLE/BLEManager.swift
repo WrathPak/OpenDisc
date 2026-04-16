@@ -67,6 +67,7 @@ final class BLEManager: NSObject {
     // Throw data
     var lastThrow: ThrowResponse?
     var throwReady: Bool = false
+    var throwCount: Int = 0
 
     // Calibration
     var calibrationProgress: CalibrationProgress?
@@ -198,6 +199,7 @@ final class BLEManager: NSObject {
         case .throw:
             if let response = try? decoder.decode(ThrowResponse.self, from: data) {
                 lastThrow = response
+                throwCount += 1
             }
 
         case .state:

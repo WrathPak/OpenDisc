@@ -1,10 +1,7 @@
 import SwiftUI
-import SwiftData
 
 struct DashboardView: View {
     @Environment(BLEManager.self) private var bleManager
-    @Environment(\.modelContext) private var modelContext
-    @State private var voiceSettings = VoiceSettings.load()
 
     var body: some View {
         NavigationStack {
@@ -35,18 +32,6 @@ struct DashboardView: View {
             }
             .onDisappear {
                 bleManager.stopLiveStream()
-            }
-            .onChange(of: bleManager.throwReady) { _, ready in
-                if ready {
-                    saveThrow()
-                    if let response = bleManager.lastThrow {
-                        VoiceManager.announceThrow(response, settings: voiceSettings)
-                    }
-                    bleManager.throwReady = false
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .voiceSettingsChanged)) { _ in
-                voiceSettings = VoiceSettings.load()
             }
         }
     }
@@ -97,19 +82,4 @@ struct DashboardView: View {
         .disabled(bleManager.deviceState != .idle)
     }
 
-    private func saveThrow() {
-        guard let response = bleManager.lastThrow, response.valid else { return }
-        let throwData = ThrowData(
-            timestamp: Date(),
-            mph: response.mph,
-            rpm: response.rpm,
-            peakG: response.peak_g,
-            hyzer: response.hyzer,
-            nose: response.nose,
-            wobble: response.wobble,
-            durationMS: response.duration_ms,
-            isValid: response.valid
-        )
-        modelContext.insert(throwData)
-    }
 }
