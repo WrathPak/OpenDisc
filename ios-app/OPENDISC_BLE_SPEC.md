@@ -165,12 +165,11 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
 {
   "type": "throw",
   "valid": true,
-  "peak_rpm": 850.0,
-  "release_rpm": 620.0,
-  "release_mph": 52.3,
+  "rpm": 620.0,
+  "mph": 52.3,
   "peak_g": 45.2,
-  "launch_hyzer": 12.5,
-  "launch_nose": -3.2,
+  "hyzer": 12.5,
+  "nose": -3.2,
   "wobble": 8.1,
   "duration_ms": 280,
   "release_idx": 412,
@@ -182,32 +181,22 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
 | Field | Type | Unit | Description |
 |---|---|---|---|
 | `valid` | bool | — | False if no throw captured or release not detected |
-| `peak_rpm` | float | RPM | Maximum spin rate during the capture window |
-| `release_rpm` | float | RPM | Spin rate at the moment of release |
-| `release_mph` | float | MPH | Disc center-of-mass speed at release. `-1` if strapdown integration failed (no stationary window found). |
-| `peak_g` | float | g | Peak acceleration (uses HG accel if main clips) |
-| `launch_hyzer` | float | degrees | Disc hyzer angle at release (quaternion-derived) |
-| `launch_nose` | float | degrees | Disc nose angle at release (quaternion-derived) |
+| `rpm` | float | RPM | Spin rate at the moment of release. Uses gyro below 327 RPM, accel fallback above. |
+| `mph` | float | MPH | Disc center-of-mass speed at release. `-1` if strapdown integration failed. |
+| `peak_g` | float | g | Peak acceleration during capture (uses HG accel if main clips) |
+| `hyzer` | float | degrees | Hyzer angle at release, relative to throw direction. Positive = left edge down from behind the disc. |
+| `nose` | float | degrees | Nose angle at release, relative to throw direction. Positive = nose up. |
 | `wobble` | float | degrees | RMS off-axis rotation over 100 ms after release |
 | `duration_ms` | int | ms | Time from first motion to release |
 | `release_idx` | int | — | Sample index of release point in ring buffer |
 | `motion_start_idx` | int | — | Sample index of motion start |
 | `stationary_end` | int | — | Sample index of last stationary sample |
 
-**RPM source logic:**
-- Below 327 RPM: gyroscope (70 mdps/LSB, accurate)
-- Above 327 RPM: accelerometer fallback (`omega = sqrt(|a_xy| / calRadius)`) using the HG +-320g accelerometer
-- Peak/release RPM are the best available at each sample
+**RPM:** uses the gyroscope (70 mdps/LSB) when below 327 RPM. Above that the gyro saturates at 2000 dps, so RPM is computed from centripetal force on the HG accelerometer using the calibrated chip radius.
 
-**MPH computation:**
-Strapdown inertial integration from stationary reference to release. Body-frame acceleration is corrected for:
-1. Centripetal offset (`omega^2 * (rx, ry)` subtracted)
-2. Tangential offset (`alpha * r_perp` subtracted)
-3. Gyro bias (estimated from stationary window)
-4. HG accel substitution when main +-16g clips
-5. Gravity subtraction in world frame via quaternion orientation tracking
+**MPH:** strapdown inertial integration from a stationary reference to the release point. Corrected for centripetal offset, tangential acceleration, gyro bias, and HG accel substitution when the main accelerometer clips. If no stationary window is found, falls back to the quietest 16-sample window in the pre-trigger buffer.
 
-Launch angles are extracted from the quaternion orientation at release, not from raw accelerometer values (which are contaminated by centripetal force during spin).
+**Hyzer/nose:** computed from the disc's orientation quaternion decomposed into the throw's own reference frame. "Forward" is the horizontal component of the velocity vector at release. Works regardless of chip mounting orientation or throw type (RHBH, forehand, etc). Falls back to centripetal-corrected accelerometer angles if the strapdown doesn't produce a usable velocity vector.
 
 ### 3.5 `cal_start` / `cal_stop` — Calibration
 

@@ -116,7 +116,7 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
                           uint16_t preTrigger,
                           const CalVector& cal) {
   ThrowMetrics m = {};
-  m.release_mph = -1;
+  m.mph = -1;
   m.release_index = -1;
   m.motion_start_index = -1;
   m.stationary_end = -1;
@@ -209,7 +209,6 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     }
   }
 
-  m.peak_rpm = peakRpm;
   m.peak_accel_g = peakG;
   m.stationary_end = stationaryEnd;
   m.motion_start_index = motionStart;
@@ -256,7 +255,7 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
   // Release-point metrics
   if (release >= 0) {
     const RawSample& rs = at(release);
-    m.release_rpm = sampleRpm(rs, cal);
+    m.rpm = sampleRpm(rs, cal);
 
     // Accel-based angles as fallback (centripetal-corrected).
     // Overwritten by quaternion if strapdown succeeds.
@@ -366,7 +365,7 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     }
 
     float vmag = sqrtf(vx*vx + vy*vy + vz*vz);
-    m.release_mph = vmag * 2.23694f;
+    m.mph = vmag * 2.23694f;
 
     // Launch angles relative to the THROW DIRECTION, not body axes.
     // This makes angles independent of how the chip is mounted on the disc.

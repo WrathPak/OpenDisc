@@ -98,7 +98,7 @@ This enables accurate MPH, RPM above 333, and throw analysis.</p>
   <div class="metric"><div class="val" id="ltHyzer">--</div><div class="lbl">Launch hyzer &deg;</div></div>
   <div class="metric"><div class="val" id="ltNose">--</div><div class="lbl">Launch nose &deg;</div></div>
   <div class="metric"><div class="val" id="ltWobble">--</div><div class="lbl">Wobble &deg;</div></div>
-  <div class="metric"><div class="val" id="ltPeakRpm">--</div><div class="lbl">Peak RPM</div></div>
+  <div class="metric"><div class="val" id="ltDur">--</div><div class="lbl">Duration ms</div></div>
 </div>
 </div>
 
@@ -466,26 +466,26 @@ async function fetchThrow() {
 function renderLastThrow(d) {
   $('lastThrowCard').style.display = 'block';
   const mphEl = $('ltMph');
-  if (d.release_mph >= 0) {
-    mphEl.textContent = d.release_mph.toFixed(1);
+  if (d.mph >= 0) {
+    mphEl.textContent = d.mph.toFixed(1);
     mphEl.classList.remove('bad');
   } else {
     mphEl.textContent = '--';
     mphEl.classList.add('bad');
   }
-  $('ltRpm').textContent = d.release_rpm.toFixed(0);
+  $('ltRpm').textContent = d.rpm.toFixed(0);
   $('ltPeakG').textContent = d.peak_g.toFixed(1);
-  $('ltHyzer').textContent = d.launch_hyzer.toFixed(1);
-  $('ltNose').textContent = d.launch_nose.toFixed(1);
+  $('ltHyzer').textContent = d.hyzer.toFixed(1);
+  $('ltNose').textContent = d.nose.toFixed(1);
   $('ltWobble').textContent = d.wobble.toFixed(1);
-  $('ltPeakRpm').textContent = d.peak_rpm.toFixed(0);
+  $('ltDur').textContent = (d.duration_ms || 0);
   localStorage.setItem('opendisc_last_throw', JSON.stringify(d));
 }
 
 function restoreLastThrow() {
   try {
     const d = JSON.parse(localStorage.getItem('opendisc_last_throw'));
-    if (d && d.release_rpm !== undefined) renderLastThrow(d);
+    if (d && d.rpm !== undefined) renderLastThrow(d);
   } catch(e) {}
 }
 
@@ -502,8 +502,8 @@ function pushHistory(d) {
   const list = loadHistory();
   list.unshift({
     t: Date.now(),
-    mph: d.release_mph,
-    rpm: d.release_rpm,
+    mph: d.mph,
+    rpm: d.rpm,
     hyzer: d.launch_hyzer,
     nose: d.launch_nose,
     wobble: d.wobble,

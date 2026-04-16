@@ -291,13 +291,13 @@ void bleHandleCommand(const char* json) {
       const ThrowMetrics& m = lastMetrics;
       char buf[400];
       snprintf(buf, sizeof(buf),
-        "{\"type\":\"throw\",\"valid\":%s,\"peak_rpm\":%.1f,\"release_rpm\":%.1f,"
-        "\"release_mph\":%.2f,\"peak_g\":%.2f,"
-        "\"launch_hyzer\":%.1f,\"launch_nose\":%.1f,"
+        "{\"type\":\"throw\",\"valid\":%s,\"rpm\":%.1f,"
+        "\"mph\":%.2f,\"peak_g\":%.2f,"
+        "\"hyzer\":%.1f,\"nose\":%.1f,"
         "\"wobble\":%.1f,\"duration_ms\":%lu,"
         "\"release_idx\":%d,\"motion_start_idx\":%d,\"stationary_end\":%d}",
         m.valid ? "true" : "false",
-        m.peak_rpm, m.release_rpm, m.release_mph, m.peak_accel_g,
+        m.rpm, m.mph, m.peak_accel_g,
         m.launch_hyzer_deg, m.launch_nose_deg, m.wobble_deg,
         (unsigned long)m.duration_ms,
         m.release_index, m.motion_start_index, m.stationary_end);

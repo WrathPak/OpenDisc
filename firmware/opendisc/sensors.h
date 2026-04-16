@@ -51,9 +51,8 @@ struct RawSample {
 };
 
 struct ThrowMetrics {
-  float peak_rpm;
-  float release_rpm;
-  float release_mph;       // -1 if integration failed
+  float rpm;               // spin rate at release
+  float mph;               // disc CM speed at release, -1 if integration failed
   float peak_accel_g;
   float launch_hyzer_deg;
   float launch_nose_deg;
