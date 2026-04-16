@@ -1,0 +1,44 @@
+name: OpenDisc
+options:
+  bundleIdPrefix: com.opendisc
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    INFOPLIST_FILE: OpenDisc/Info.plist
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+targets:
+  OpenDisc:
+    type: application
+    platform: iOS
+    sources:
+      - OpenDisc
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.opendisc.app
+        INFOPLIST_FILE: OpenDisc/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: REDACTED
+        PRODUCT_NAME: OpenDisc
+    info:
+      path: OpenDisc/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSBluetoothAlwaysUsageDescription: "OpenDisc uses Bluetooth to connect to your disc golf throw analyzer."
+        UIBackgroundModes:
+          - bluetooth-central
+        CFBundleDisplayName: OpenDisc
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "2"
+        CFBundleIconName: AppIcon
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
