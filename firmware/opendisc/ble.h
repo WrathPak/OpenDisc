@@ -8,6 +8,7 @@ void bleTick();
 void blePushState(const char* stateName);
 void blePushThrowReady();
 bool bleClientConnected();
+bool bleWifiShouldBeOn();
 
 // Debug log visible via web UI
 #define DEBUG_LOG_SIZE 20

@@ -30,7 +30,7 @@ const char* WIFI_PASS = "goodlife123";
 // ─── Burst capture config ───────────────────────────────────
 #define SAMPLE_HZ      960
 #define SAMPLE_US      (1000000UL / SAMPLE_HZ)
-#define PRE_TRIGGER    192
+#define PRE_TRIGGER    384
 #define POST_TRIGGER   768
 #define RING_SIZE      (PRE_TRIGGER + POST_TRIGGER)
 #define TRIGGER_G_DEFAULT  3.0f
@@ -288,6 +288,32 @@ void loop() {
 
   server.handleClient();
   bleTick();
+
+  // WiFi power management: BLE client can disable WiFi for battery savings
+  static bool wifiRunning = true;
+  static unsigned long lastWifiCheck = 0;
+  if (millis() - lastWifiCheck > 2000) {
+    lastWifiCheck = millis();
+    bool shouldBeOn = bleWifiShouldBeOn();
+    if (wifiRunning && !shouldBeOn) {
+      server.stop();
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      wifiRunning = false;
+      debugMsg("WiFi stopped for power saving");
+    } else if (!wifiRunning && shouldBeOn) {
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      unsigned long t = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - t < 10000) delay(100);
+      if (WiFi.status() == WL_CONNECTED) {
+        MDNS.begin("opendisc");
+        server.begin();
+        wifiRunning = true;
+        debugMsg("WiFi restored: %s", WiFi.localIP().toString().c_str());
+      }
+    }
+  }
 }
 
 

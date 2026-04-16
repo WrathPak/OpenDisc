@@ -479,6 +479,14 @@ function renderLastThrow(d) {
   $('ltNose').textContent = d.launch_nose.toFixed(1);
   $('ltWobble').textContent = d.wobble.toFixed(1);
   $('ltPeakRpm').textContent = d.peak_rpm.toFixed(0);
+  localStorage.setItem('opendisc_last_throw', JSON.stringify(d));
+}
+
+function restoreLastThrow() {
+  try {
+    const d = JSON.parse(localStorage.getItem('opendisc_last_throw'));
+    if (d && d.release_rpm !== undefined) renderLastThrow(d);
+  } catch(e) {}
 }
 
 function loadHistory() {
@@ -612,6 +620,7 @@ async function refreshDebug() {
 }
 setInterval(refreshDebug, 2000);
 
+restoreLastThrow();
 renderHistory();
 loadSettings();
 connect();

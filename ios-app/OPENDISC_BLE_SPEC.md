@@ -323,6 +323,32 @@ Accepted calibration is persisted to NVS and survives power cycles.
 }
 ```
 
+### 3.8 `wifi_off` / `wifi_on` — WiFi Power Management
+
+Disabling WiFi saves significant battery (~100 mA). WiFi auto-restores 5 minutes after BLE disconnect so the device stays accessible if the app loses connection.
+
+**Disable WiFi:**
+```json
+{"cmd":"wifi_off"}
+```
+
+**Response:**
+```json
+{"type":"ack","msg":"WiFi off. Restores 5 min after BLE disconnect."}
+```
+
+**Re-enable WiFi:**
+```json
+{"cmd":"wifi_on"}
+```
+
+**Response:**
+```json
+{"type":"ack","msg":"WiFi on."}
+```
+
+WiFi is always on at boot. It only turns off when a BLE client explicitly requests it. If the BLE client disconnects while WiFi is off, WiFi automatically comes back after 5 minutes.
+
 ---
 
 ## 4. Device State Machine

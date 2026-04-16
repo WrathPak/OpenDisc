@@ -55,6 +55,11 @@ static unsigned long lastStreamMs = 0;
 static unsigned long lastCalPushMs = 0;
 static uint8_t prevState = 255;
 
+// WiFi power management
+static bool wifiDisabledByBle = false;
+static unsigned long bleDisconnectMs = 0;
+#define WIFI_RESTORE_TIMEOUT_MS  300000  // 5 minutes
+
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pSvr, NimBLEConnInfo& connInfo) override {
     deviceConnected = true;
@@ -64,6 +69,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* pSvr, NimBLEConnInfo& connInfo, int reason) override {
     deviceConnected = false;
     liveStreaming = false;
+    if (wifiDisabledByBle) bleDisconnectMs = millis();
     debugMsg("BLE client disconnected (reason %d)", reason);
     NimBLEDevice::startAdvertising();
   }
@@ -124,12 +130,26 @@ void initBLE() {
 
 void bleSendJson(const char* json) {
   if (!deviceConnected || !pTxChar) return;
-  pTxChar->setValue((const uint8_t*)json, strlen(json));
+  size_t len = strlen(json);
+  pTxChar->setValue((const uint8_t*)json, len);
   pTxChar->notify();
+  debugMsg("BLE TX %d bytes", len);
 }
 
 bool bleClientConnected() {
   return deviceConnected;
+}
+
+bool bleWifiShouldBeOn() {
+  if (!wifiDisabledByBle) return true;
+  if (deviceConnected) return false;  // BLE still managing, stay off
+  // Auto-restore after timeout
+  if (millis() - bleDisconnectMs > WIFI_RESTORE_TIMEOUT_MS) {
+    wifiDisabledByBle = false;
+    debugMsg("WiFi auto-restored after timeout");
+    return true;
+  }
+  return false;
 }
 
 void blePushState(const char* stateName) {
@@ -341,6 +361,16 @@ void bleHandleCommand(const char* json) {
       "{\"type\":\"settings\",\"auto_arm\":%s,\"trigger_g\":%.2f}",
       autoArm ? "true" : "false", triggerG);
     bleSendJson(buf);
+
+  } else if (strcmp(cmd, "wifi_off") == 0) {
+    wifiDisabledByBle = true;
+    debugMsg("WiFi disabled by BLE client");
+    bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi off. Restores 5 min after BLE disconnect.\"}");
+
+  } else if (strcmp(cmd, "wifi_on") == 0) {
+    wifiDisabledByBle = false;
+    debugMsg("WiFi enabled by BLE client");
+    bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi on.\"}");
 
   } else if (strcmp(cmd, "imudiag") == 0) {
     ImuDiag d = readImuDiag();
