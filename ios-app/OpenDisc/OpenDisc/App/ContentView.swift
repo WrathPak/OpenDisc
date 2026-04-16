@@ -5,10 +5,11 @@ struct ContentView: View {
     @Environment(BLEManager.self) private var bleManager
     @Environment(\.modelContext) private var modelContext
     @State private var voiceSettings = VoiceSettings.load()
+    @State private var selectedDisc: Disc?
 
     var body: some View {
         TabView {
-            DashboardView()
+            DashboardView(selectedDisc: $selectedDisc)
                 .tabItem {
                     Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
                 }
@@ -60,7 +61,8 @@ struct ContentView: View {
             nose: response.nose,
             wobble: response.wobble,
             durationMS: response.duration_ms,
-            isValid: response.valid
+            isValid: response.valid,
+            disc: selectedDisc
         )
         modelContext.insert(throwData)
         try? modelContext.save()

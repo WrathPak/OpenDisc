@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct ThrowDetailView: View {
-    let throwData: ThrowData
+    @Bindable var throwData: ThrowData
+    @State private var showingEdit = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -11,6 +12,26 @@ struct ThrowDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                // Disc + tag
+                if throwData.disc != nil || throwData.tag != ThrowTag.none.rawValue {
+                    HStack(spacing: 12) {
+                        if let disc = throwData.disc {
+                            Label(disc.displayName, systemImage: "opticaldisc")
+                                .font(.subheadline)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .glassEffect(.regular.tint(.accentColor.opacity(0.2)))
+                        }
+                        if throwData.tag != ThrowTag.none.rawValue {
+                            Text(throwData.tag)
+                                .font(.caption)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .glassEffect(.regular.tint(.purple.opacity(0.2)))
+                        }
+                    }
+                }
+
                 // Hero MPH
                 VStack(spacing: 4) {
                     Text(throwData.displayMPH)
@@ -55,14 +76,26 @@ struct ThrowDetailView: View {
                         unit: "degrees",
                         tint: wobbleColor
                     )
+                    MetricCard(
+                        title: "Duration",
+                        value: "\(throwData.durationMS)",
+                        unit: "ms"
+                    )
                 }
 
-                // Duration
-                MetricCard(
-                    title: "Duration",
-                    value: "\(throwData.durationMS)",
-                    unit: "ms"
-                )
+                // Notes
+                if !throwData.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Notes")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(throwData.notes)
+                            .font(.subheadline)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .glassEffect(.regular)
+                }
 
                 // Timestamp
                 Text(throwData.timestamp, format: .dateTime.month().day().hour().minute())
@@ -73,6 +106,16 @@ struct ThrowDetailView: View {
         }
         .navigationTitle("Throw Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit", systemImage: "pencil") {
+                    showingEdit = true
+                }
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            ThrowEditView(throwData: throwData)
+        }
     }
 
     private var wobbleColor: Color {

@@ -9,9 +9,16 @@ struct ThrowRow: View {
                 Text(throwData.displayMPH + " mph")
                     .font(.headline)
                     .monospacedDigit()
-                Text(throwData.timestamp, format: .dateTime.month().day().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(throwData.timestamp, format: .dateTime.month().day().hour().minute())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let disc = throwData.disc {
+                        Text(disc.displayName)
+                            .font(.caption)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
             }
 
             Spacer()

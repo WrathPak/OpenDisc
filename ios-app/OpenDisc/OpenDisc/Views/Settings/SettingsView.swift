@@ -9,10 +9,26 @@ struct SettingsView: View {
     @State private var settingsLoaded: Bool = false
     @State private var triggerDebounce: Task<Void, Never>?
     @State private var voice = VoiceSettings.load()
+    @State private var appSettings = AppSettings.load()
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Player") {
+                    Picker("Throwing Hand", selection: $appSettings.handedness) {
+                        ForEach(Handedness.allCases, id: \.self) { h in
+                            Text(h.rawValue).tag(h)
+                        }
+                    }
+                    .onChange(of: appSettings.handedness) { _, _ in
+                        appSettings.save()
+                    }
+
+                    NavigationLink("My Discs") {
+                        DiscsView()
+                    }
+                }
+
                 Section("Throw Detection") {
                     Toggle("Auto-Arm", isOn: $autoArm)
                         .onChange(of: autoArm) { _, newValue in

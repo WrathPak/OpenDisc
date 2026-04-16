@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(BLEManager.self) private var bleManager
+    @Binding var selectedDisc: Disc?
 
     var body: some View {
         NavigationStack {
@@ -11,6 +12,8 @@ struct DashboardView: View {
                         connectionState: bleManager.connectionState,
                         deviceState: bleManager.deviceState
                     )
+
+                    DiscPicker(selectedDisc: $selectedDisc)
 
                     SpeedDisplay(mph: bleManager.lastThrow?.mph)
 
@@ -81,5 +84,4 @@ struct DashboardView: View {
         .buttonStyle(.glass)
         .disabled(bleManager.deviceState != .idle)
     }
-
 }

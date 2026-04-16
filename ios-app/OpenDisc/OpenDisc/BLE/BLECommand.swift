@@ -13,6 +13,7 @@ enum BLECommand {
     case wifiOn
     case wifiOff
     case imuDiag
+    case dumpRaw
 
     var jsonData: Data {
         var dict: [String: Any] = [:]
@@ -32,6 +33,7 @@ enum BLECommand {
         case .wifiOn:       dict["cmd"] = "wifi_on"
         case .wifiOff:      dict["cmd"] = "wifi_off"
         case .imuDiag:      dict["cmd"] = "imudiag"
+        case .dumpRaw:      dict["cmd"] = "dump_raw"
         }
         return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
     }

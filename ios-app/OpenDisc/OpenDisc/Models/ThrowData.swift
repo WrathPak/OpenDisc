@@ -1,6 +1,14 @@
 import Foundation
 import SwiftData
 
+enum ThrowTag: String, Codable, CaseIterable {
+    case none = "None"
+    case good = "Good throw"
+    case notAThrow = "Not a throw"
+    case edgeCase = "Edge case"
+    case custom = "Custom"
+}
+
 @Model
 final class ThrowData {
     var timestamp: Date
@@ -12,6 +20,9 @@ final class ThrowData {
     var wobble: Float
     var durationMS: Int
     var isValid: Bool
+    var notes: String
+    var tag: String
+    var disc: Disc?
 
     var displayMPH: String {
         mph < 0 ? "--" : String(format: "%.1f", mph)
@@ -27,7 +38,8 @@ final class ThrowData {
 
     init(timestamp: Date, mph: Float, rpm: Float, peakG: Float,
          hyzer: Float, nose: Float, wobble: Float,
-         durationMS: Int, isValid: Bool) {
+         durationMS: Int, isValid: Bool, disc: Disc? = nil,
+         notes: String = "", tag: String = ThrowTag.none.rawValue) {
         self.timestamp = timestamp
         self.mph = mph
         self.rpm = rpm
@@ -37,5 +49,8 @@ final class ThrowData {
         self.wobble = wobble
         self.durationMS = durationMS
         self.isValid = isValid
+        self.disc = disc
+        self.notes = notes
+        self.tag = tag
     }
 }

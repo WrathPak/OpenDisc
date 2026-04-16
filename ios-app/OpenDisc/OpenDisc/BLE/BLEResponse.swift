@@ -89,6 +89,26 @@ struct AckResponse: Decodable {
     let msg: String
 }
 
+struct DumpStatusResponse: Decodable {
+    let type: String
+    let status: String
+    let samples: Int?
+}
+
+struct DumpSampleResponse: Decodable {
+    let type: String
+    let i: Int
+    let ax: Int16
+    let ay: Int16
+    let az: Int16
+    let gx: Int16
+    let gy: Int16
+    let gz: Int16
+    let hx: Int16
+    let hy: Int16
+    let hz: Int16
+}
+
 enum BLEResponseType: String {
     case status
     case live
@@ -100,4 +120,6 @@ enum BLEResponseType: String {
     case settings
     case imudiag
     case ack
+    case dump
+    case d
 }

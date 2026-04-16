@@ -10,6 +10,6 @@ struct OpenDiscApp: App {
             ContentView()
                 .environment(bleManager)
         }
-        .modelContainer(for: ThrowData.self)
+        .modelContainer(for: [ThrowData.self, Disc.self])
     }
 }

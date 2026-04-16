@@ -80,6 +80,11 @@ final class BLEManager: NSObject {
     // Diagnostics
     var imuDiag: IMUDiagResponse?
 
+    // Raw dump
+    var isDumping: Bool = false
+    var dumpSamples: [DumpSampleResponse] = []
+    var dumpComplete: Bool = false
+
     // Error
     var error: BLEError?
 
@@ -155,6 +160,7 @@ final class BLEManager: NSObject {
     func stopCalibration()  { sendCommand(.calStop) }
     func getSettings()      { sendCommand(.settingsGet) }
     func requestIMUDiag()   { sendCommand(.imuDiag) }
+    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; isDumping = true; sendCommand(.dumpRaw) }
     func setWifi(enabled: Bool) { sendCommand(enabled ? .wifiOn : .wifiOff) }
 
     func updateSettings(autoArm: Bool? = nil, triggerG: Float? = nil) {
@@ -240,6 +246,19 @@ final class BLEManager: NSObject {
 
         case .ack:
             break
+
+        case .dump:
+            if let response = try? decoder.decode(DumpStatusResponse.self, from: data) {
+                if response.status == "done" || response.status == "no_throw" {
+                    isDumping = false
+                    dumpComplete = response.status == "done"
+                }
+            }
+
+        case .d:
+            if let sample = try? decoder.decode(DumpSampleResponse.self, from: data) {
+                dumpSamples.append(sample)
+            }
         }
     }
 }
