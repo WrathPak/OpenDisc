@@ -1,28 +1,24 @@
 # OpenDisc
 
-An open-source disc golf throw analyzer — a DIY alternative to TechDisc built with off-the-shelf components.
+Open source disc golf throw analyzer. Cheap off-the-shelf parts, ~$40 total, does what a TechDisc does.
 
-## What It Does
+## What it measures
 
-OpenDisc captures high-rate IMU data during a disc golf throw and computes:
+- Release speed (MPH)
+- Spin rate (RPM), including throws above 333 RPM where the gyro maxes out
+- Launch hyzer and nose angles
+- Wobble (off-axis rotation after release)
+- Peak G-force (up to 320g)
 
-- **Release speed (MPH)** via strapdown inertial integration
-- **Spin rate (RPM)** from gyroscope + accelerometer fallback for high-speed throws
-- **Launch hyzer angle** — quaternion-derived, immune to centripetal contamination
-- **Launch nose angle** — quaternion-derived
-- **Wobble** — off-axis precession after release
-- **Peak G-force** — using a ±320g high-G accelerometer
+It auto-arms when you move the disc, captures a 1-second burst at 960 Hz, crunches the numbers on-device, and shows you the results over WiFi or BLE.
 
-The device auto-arms on motion, captures a 1-second burst at 960 Hz, analyzes the throw on-device, and serves the results via a web UI and BLE.
+## Parts
 
-## Hardware
-
-| Component | Part | Approx Cost |
+| What | Part | Cost |
 |---|---|---|
-| Microcontroller | ESP32-C6 Super Mini (4MB) | $5 |
-| IMU | BerryIMU 320G (LSM6DSV320X + LIS3MDL) | $30 |
-| Battery | 3.7V LiPo (any small cell) | $5 |
-| Total | | **~$40** |
+| MCU | ESP32-C6 Super Mini (4MB) | ~$5 |
+| IMU | BerryIMU 320G (LSM6DSV320X + LIS3MDL) | ~$30 |
+| Battery | Any small 3.7V LiPo | ~$5 |
 
 ### Wiring
 
@@ -33,94 +29,81 @@ The device auto-arms on motion, captures a 1-second burst at 960 Hz, analyzes th
 | 3.3V | VCC |
 | GND | GND |
 
-## Firmware
+That's it. Four wires.
 
-The firmware is an Arduino sketch in [`firmware/opendisc/`](firmware/opendisc/).
+## Building the firmware
 
-### Building
+The firmware lives in `firmware/opendisc/`. It's a standard Arduino sketch.
 
-Requires:
+You need:
 - [Arduino CLI](https://arduino.github.io/arduino-cli/) or Arduino IDE
 - ESP32 board package (`esp32:esp32` v3.x)
 - [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) library (v2.x)
 
 ```bash
-# Install ESP32 board support
 arduino-cli core install esp32:esp32
-
-# Install NimBLE
 arduino-cli lib install NimBLE-Arduino
 
-# Compile (must use huge_app partition for WiFi + BLE)
+# WiFi + BLE together need the large partition scheme
 arduino-cli compile --fqbn "esp32:esp32:esp32c6:PartitionScheme=huge_app" firmware/opendisc
-
-# Upload
 arduino-cli upload -p COM_PORT --fqbn "esp32:esp32:esp32c6:PartitionScheme=huge_app" firmware/opendisc
 ```
 
-### Features
+## How it works
 
-- **Web UI** at `opendisc.local` — live readings, throw cards, throw history, calibration with guided progress bar, settings
-- **BLE** (Nordic UART Service) — full command protocol for iOS/Android app integration
-- **Auto-arm** — detects throw motion automatically, no button press needed
-- **Calibration** — vectorial regression determines the IMU chip's exact position on the disc for centripetal correction
-- **Strapdown MPH** — integrates body-frame acceleration to compute disc center-of-mass velocity at release, with centripetal subtraction, gyro bias correction, and HG accel fallback
-- **Accel-fallback RPM** — when the gyro saturates above ~333 RPM, RPM is derived from centripetal force using the calibrated chip offset and the ±320g high-G accelerometer
+**Web UI** runs at `opendisc.local` with live sensor readouts, throw results, throw history (saved in your phone's browser), calibration walkthrough, and settings.
 
-### Sensor Notes
+**BLE** uses a Nordic UART Service so a native app can talk to it. Full protocol spec is in `ios-app/OPENDISC_BLE_SPEC.md`.
 
-The LSM6DSV320X on the BerryIMU 320G empirically caps at ±2000 dps gyro (333 RPM) despite ST's driver claiming ±4000 dps support via FS_G=0x5. Real disc golf throws (500–1500 RPM) exceed this, so the firmware automatically falls back to accelerometer-derived RPM using the calibrated chip radius. See the firmware comments for the full investigation.
+**Auto-arm** picks up when you start your throwing motion. No button to press.
 
-## iOS App
+**Speed (MPH)** is computed by integrating accelerometer data from the windup through release. The firmware tracks orientation with a quaternion, subtracts gravity in the world frame, and corrects for the chip's offset from disc center so you get the actual disc speed, not the chip's speed.
 
-The [`ios-app/`](ios-app/) folder contains the BLE protocol specification for building a companion iOS app:
+**RPM** comes from the gyro up to about 333 RPM. Above that the gyro saturates (the chip tops out at 2000 dps despite the datasheet saying otherwise), so the firmware switches to computing RPM from centripetal force measured by the high-G accelerometer. This requires calibration.
 
-- [`OPENDISC_BLE_SPEC.md`](ios-app/OPENDISC_BLE_SPEC.md) — complete BLE command reference, state machine, calibration/throw flows, CoreBluetooth code snippets, and suggested screen layouts
-
-The iOS app is under development. Contributions welcome.
+**Angles** at release come from the integrated quaternion orientation, not raw accelerometer readings. Raw accel is useless for angles during spin because centripetal force swamps the gravity signal.
 
 ## Calibration
 
-Before first use, the IMU chip's physical offset from the disc's spin axis must be calibrated:
+You need to calibrate once per mounting so the firmware knows where the IMU chip sits relative to the disc's center. Stick it on a lazy susan or turntable, spin it at a few different speeds, and the firmware figures out the chip's position from the centripetal force pattern.
 
-1. Mount the OpenDisc module on a disc (or any flat spinning surface like a lazy susan)
-2. Open the web UI or connect via BLE
-3. Start calibration and spin the disc at varying speeds (200–500 RPM)
-4. The firmware fits a vectorial regression to determine the chip's body-frame position vector `(rx, ry)`
-5. This calibration is stored in flash and survives power cycles
+This gets stored in flash and sticks across reboots. The calibration is used for correcting angles, computing MPH accurately, and the accelerometer RPM fallback.
 
-The calibrated offset is used for:
-- Centripetal-corrected hyzer/nose angles during spin
-- Accurate MPH via centripetal subtraction in the strapdown integration
-- Accelerometer-derived RPM when the gyro clips
+## Gyro range note
 
-## Project Structure
+The LSM6DSV320X on the BerryIMU 320G won't actually run at 4000 dps even though ST's own driver says it should. We tested every register combination. It caps at 2000 dps (about 333 RPM). For real throws that spin faster than that, the accelerometer fallback handles it. If you figure out how to unlock 4000 dps on this chip, please open an issue.
+
+## iOS app
+
+The `ios-app/` folder has a BLE protocol spec (`OPENDISC_BLE_SPEC.md`) with everything you need to build a companion app: command format, response schemas, state machine, calibration and throw flows, CoreBluetooth snippets, and screen layout suggestions.
+
+The app itself hasn't been built yet.
+
+## Project layout
 
 ```
-OpenDisc/
-├── README.md
-├── firmware/
-│   └── opendisc/          # Arduino sketch
-│       ├── opendisc.ino   # Main sketch (WiFi, routes, loop, settings)
-│       ├── sensors.h/cpp  # LSM6DSV320X + LIS3MDL register config & reads
-│       ├── analyzer.h/cpp # Throw analysis (strapdown, release detection)
-│       ├── ble.h/cpp      # BLE server (NimBLE NUS, command parser)
-│       └── page.h         # Web UI (HTML/CSS/JS in PROGMEM)
-└── ios-app/
-    └── OPENDISC_BLE_SPEC.md  # BLE protocol spec for iOS development
+firmware/opendisc/
+  opendisc.ino      Main sketch
+  sensors.h/.cpp    IMU register setup and raw reads
+  analyzer.h/.cpp   Throw analysis (strapdown integration, release detection)
+  ble.h/.cpp        BLE server and command handling
+  page.h            Web UI (HTML/JS/CSS baked into flash)
+
+ios-app/
+  OPENDISC_BLE_SPEC.md   BLE protocol reference for app development
 ```
 
-## Contributing
+## Want to help?
 
-This is an early-stage project. Areas where help is needed:
+This is early. Lots to do:
 
-- iOS app (Swift/SwiftUI + CoreBluetooth)
+- iOS app (Swift + CoreBluetooth)
 - Android app
-- PCB design for a compact disc-mountable module
-- 3D-printable enclosure designs
-- Flight analysis (post-release IMU data for fade/turn detection)
-- Battery monitoring integration
+- Custom PCB so it's not a rats nest of wires
+- 3D printable case that fits inside a disc
+- Post-release flight analysis (fade, turn, skip detection)
+- Battery voltage monitoring (needs a resistor divider to an ADC pin)
 
 ## License
 
-Open source. License TBD.
+TBD.
