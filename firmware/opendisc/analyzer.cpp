@@ -368,17 +368,39 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     float vmag = sqrtf(vx*vx + vy*vy + vz*vz);
     m.release_mph = vmag * 2.23694f;
 
-    // Launch angles from the orientation quaternion at release.
-    // q maps body→world. The disc's body z-axis in world frame gives tilt:
-    //   world_z_of_disc = R(q) * (0,0,1)
-    // hyzer = roll = atan2(world_z.y, world_z.z)  (tilt around forward axis)
-    // nose  = pitch = asin(-world_z.x)            (tilt around lateral axis)
-    Vec3 discZ = qRotate(q, {0, 0, 1});
-    m.launch_hyzer_deg = atan2f(discZ.y, discZ.z) * 180.0f / (float)M_PI;
-    float clampX = discZ.x;
-    if (clampX > 1.0f) clampX = 1.0f;
-    if (clampX < -1.0f) clampX = -1.0f;
-    m.launch_nose_deg = asinf(-clampX) * 180.0f / (float)M_PI;
+    // Launch angles relative to the THROW DIRECTION, not body axes.
+    // This makes angles independent of how the chip is mounted on the disc.
+    //
+    // 1. disc_normal = R(q) * (0,0,1) = disc's "up" in world frame
+    // 2. throw_fwd = normalize(vx, vy, 0) = horizontal flight direction
+    // 3. throw_right = cross(throw_fwd, world_up)
+    //
+    // Decompose disc_normal into the throw frame:
+    //   n_fwd   = dot(disc_normal, throw_fwd)   -> nose component
+    //   n_right = dot(disc_normal, throw_right)  -> hyzer component
+    //   n_up    = dot(disc_normal, world_up)     -> vertical component
+    //
+    // hyzer = atan2(-n_right, n_up)  (positive = left edge down from thrower POV)
+    // nose  = atan2(-n_fwd, n_up)    (positive = nose up)
+
+    Vec3 discN = qRotate(q, {0, 0, 1});
+
+    float hspd = sqrtf(vx*vx + vy*vy);
+    if (hspd > 0.5f) {  // need meaningful horizontal velocity
+      float fwd_x = vx / hspd;
+      float fwd_y = vy / hspd;
+      // throw_right = cross((fwd_x, fwd_y, 0), (0, 0, 1)) = (fwd_y, -fwd_x, 0)
+      float right_x = fwd_y;
+      float right_y = -fwd_x;
+
+      float n_fwd   = discN.x * fwd_x   + discN.y * fwd_y;    // dot with forward
+      float n_right = discN.x * right_x + discN.y * right_y;  // dot with right
+      float n_up    = discN.z;                                  // dot with (0,0,1)
+
+      m.launch_hyzer_deg = atan2f(-n_right, n_up) * 180.0f / (float)M_PI;
+      m.launch_nose_deg  = atan2f(-n_fwd, n_up)   * 180.0f / (float)M_PI;
+    }
+    // else: keep accel-based fallback angles from Pass 2
   }
 
   m.valid = (release >= 0);
