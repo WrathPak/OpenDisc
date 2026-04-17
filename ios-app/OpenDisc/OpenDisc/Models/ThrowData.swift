@@ -38,6 +38,30 @@ final class ThrowData {
     var throwHand: String  // ThrowHand raw value
     var disc: Disc?
 
+    /// Encoded `[DumpSampleResponse]` from the `dump_raw` BLE stream.
+    /// Used to reconstruct the 3D trajectory on demand. Optional because old
+    /// throws and throws where the dump failed/was skipped won't have it.
+    var rawSamples: Data?
+
+    /// Release sample index within the raw buffer (matches `ThrowResponse.release_idx`).
+    var releaseIdx: Int = 0
+
+    /// Calibration chip offset at the time of the throw, for trajectory reconstruction.
+    var calRx: Float = 0
+    var calRy: Float = 0
+
+    /// Decoded raw samples, or nil if not available.
+    var decodedSamples: [DumpSampleResponse]? {
+        guard let data = rawSamples else { return nil }
+        return try? JSONDecoder().decode([DumpSampleResponse].self, from: data)
+    }
+
+    /// True if this throw has raw data suitable for trajectory reconstruction.
+    var hasTrajectoryData: Bool {
+        guard let data = rawSamples else { return false }
+        return data.count > 0
+    }
+
     var displayMPH: String {
         mph < 0 ? "--" : String(format: "%.1f", mph)
     }

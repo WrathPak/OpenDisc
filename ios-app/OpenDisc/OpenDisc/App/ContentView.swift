@@ -9,6 +9,9 @@ struct ContentView: View {
     @State private var throwType: ThrowType = AppSettings.load().defaultThrowType
     @State private var throwHand: ThrowHand = AppSettings.load().defaultThrowHand
 
+    /// The most recently saved throw, pending its raw-dump payload.
+    @State private var pendingThrow: ThrowData?
+
     var body: some View {
         TabView {
             DashboardView(
@@ -44,6 +47,9 @@ struct ContentView: View {
                 VoiceManager.announceThrow(response, settings: voiceSettings)
             }
         }
+        .onChange(of: bleManager.dumpComplete) { _, complete in
+            if complete { persistRawDump() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .voiceSettingsChanged)) { _ in
             voiceSettings = VoiceSettings.load()
         }
@@ -58,6 +64,7 @@ struct ContentView: View {
 
     private func saveThrow() {
         guard let response = bleManager.lastThrow, response.valid else { return }
+        let status = bleManager.deviceStatus
         let throwData = ThrowData(
             timestamp: Date(),
             mph: response.mph,
@@ -72,7 +79,28 @@ struct ContentView: View {
             throwType: throwType,
             throwHand: throwHand
         )
+        throwData.releaseIdx = response.release_idx
+        throwData.calRx = status?.calRX ?? 0
+        throwData.calRy = status?.calRY ?? 0
         modelContext.insert(throwData)
         try? modelContext.save()
+
+        // Kick off the raw dump so we can reconstruct the trajectory later.
+        pendingThrow = throwData
+        bleManager.dumpRaw()
+    }
+
+    private func persistRawDump() {
+        guard let throwData = pendingThrow else { return }
+        let samples = bleManager.dumpSamples
+        guard !samples.isEmpty else {
+            pendingThrow = nil
+            return
+        }
+        if let encoded = try? JSONEncoder().encode(samples) {
+            throwData.rawSamples = encoded
+            try? modelContext.save()
+        }
+        pendingThrow = nil
     }
 }

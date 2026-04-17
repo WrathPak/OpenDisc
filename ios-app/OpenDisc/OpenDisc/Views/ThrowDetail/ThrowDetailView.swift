@@ -3,6 +3,9 @@ import SwiftUI
 struct ThrowDetailView: View {
     @Bindable var throwData: ThrowData
     @State private var showingEdit = false
+    @State private var showingTrajectory = false
+    @State private var trajectory: Trajectory?
+    @State private var trajectoryError: String?
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -89,6 +92,27 @@ struct ThrowDetailView: View {
                     )
                 }
 
+                // 3D trajectory
+                if throwData.hasTrajectoryData {
+                    Button {
+                        computeAndShowTrajectory()
+                    } label: {
+                        Label("View 3D Trajectory", systemImage: "scope")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                }
+
+                if let msg = trajectoryError {
+                    Text(msg)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
                 // Notes
                 if !throwData.notes.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -122,11 +146,36 @@ struct ThrowDetailView: View {
         .sheet(isPresented: $showingEdit) {
             ThrowEditView(throwData: throwData)
         }
+        .sheet(isPresented: $showingTrajectory) {
+            if let trajectory {
+                TrajectoryView(trajectory: trajectory)
+            }
+        }
     }
 
     private var wobbleColor: Color {
         if throwData.wobble < 5 { return .green }
         if throwData.wobble < 15 { return .yellow }
         return .orange
+    }
+
+    private func computeAndShowTrajectory() {
+        trajectoryError = nil
+        guard let samples = throwData.decodedSamples, !samples.isEmpty else {
+            trajectoryError = "No raw sample data available for this throw."
+            return
+        }
+        let releaseIdx = throwData.releaseIdx < samples.count ? throwData.releaseIdx : nil
+        guard let result = TrajectoryEngine.compute(
+            samples: samples,
+            releaseIndex: releaseIdx,
+            calRx: throwData.calRx,
+            calRy: throwData.calRy
+        ) else {
+            trajectoryError = "Couldn't reconstruct trajectory — burst too short or no stationary reference."
+            return
+        }
+        trajectory = result
+        showingTrajectory = true
     }
 }

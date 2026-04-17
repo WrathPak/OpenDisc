@@ -95,7 +95,7 @@ struct DumpStatusResponse: Decodable {
     let samples: Int?
 }
 
-struct DumpSampleResponse: Decodable {
+struct DumpSampleResponse: Codable {
     let type: String
     let i: Int
     let ax: Int16

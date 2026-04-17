@@ -125,13 +125,13 @@ Starts streaming live sensor data at 10 Hz via TX notifications. Each notificati
 
 | Field | Type | Unit | Description |
 |---|---|---|---|
-| `rpm_gyro` | float | RPM | Gyroscope-derived spin rate (accurate up to 333 RPM) |
-| `rpm_accel` | float | RPM | Accelerometer-derived spin rate (requires calibration, valid above 333 RPM). `-1` if uncalibrated. `0` if gyro < 20 RPM. |
+| `rpm_gyro` | float | RPM | Gyroscope-derived spin rate (accurate up to 666 RPM) |
+| `rpm_accel` | float | RPM | Accelerometer-derived spin rate (requires calibration, valid above 666 RPM). `-1` if uncalibrated. `0` if gyro < 20 RPM. |
 | `accel_g` | float | g | Total acceleration magnitude |
 | `hg_g` | float | g | High-G accelerometer magnitude |
 | `hyzer` | float | degrees | Disc hyzer angle (positive = hyzer, negative = anhyzer). Centripetal-corrected if calibrated. |
 | `nose` | float | degrees | Disc nose angle (positive = nose up). Centripetal-corrected if calibrated. |
-| `gyro_clipped` | bool | — | True if gyro is saturated (>327 RPM) |
+| `gyro_clipped` | bool | — | True if gyro is saturated (>660 RPM) |
 | `state` | string | — | Current device state |
 
 **Stop:**
@@ -181,7 +181,7 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
 | Field | Type | Unit | Description |
 |---|---|---|---|
 | `valid` | bool | — | False if no throw captured or release not detected |
-| `rpm` | float | RPM | Spin rate at the moment of release. Uses gyro below 327 RPM, accel fallback above. |
+| `rpm` | float | RPM | Spin rate at the moment of release. Uses gyro below 660 RPM, accel fallback above. |
 | `mph` | float | MPH | Disc center-of-mass speed at release. `-1` if strapdown integration failed. |
 | `peak_g` | float | g | Peak acceleration during capture (uses HG accel if main clips) |
 | `hyzer` | float | degrees | Hyzer angle at release, relative to throw direction. Positive = left edge down from behind the disc. |
@@ -192,7 +192,7 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
 | `motion_start_idx` | int | — | Sample index of motion start |
 | `stationary_end` | int | — | Sample index of last stationary sample |
 
-**RPM:** uses the gyroscope (70 mdps/LSB) when below 327 RPM. Above that the gyro saturates at 2000 dps, so RPM is computed from centripetal force on the HG accelerometer using the calibrated chip radius.
+**RPM:** uses the gyroscope (140 mdps/LSB) when below 666 RPM. Above that the gyro saturates at 4000 dps, so RPM is computed from centripetal force on the HG accelerometer using the calibrated chip radius.
 
 **MPH:** strapdown inertial integration from a stationary reference to the release point. Corrected for centripetal offset, tangential acceleration, gyro bias, and HG accel substitution when the main accelerometer clips. If no stationary window is found, falls back to the quietest 16-sample window in the pre-trigger buffer.
 
@@ -307,7 +307,7 @@ Accepted calibration is persisted to NVS and survives power cycles.
   "ctrl8": "0x03",
   "ctrl9": "0x00",
   "ctrl1_xl_hg": "0xA4",
-  "fs_g": "2000 dps",
+  "fs_g": "4000 dps",
   "fs_xl": "16 g"
 }
 ```
@@ -361,12 +361,12 @@ Streams the full ring buffer from the most recent capture. 1920 samples at 960 H
 |---|---|
 | `i` | Sample index relative to trigger. Negative = pre-trigger. |
 | `ax/ay/az` | Raw 16-bit accelerometer (main, +-16g) |
-| `gx/gy/gz` | Raw 16-bit gyroscope (+-2000 dps) |
+| `gx/gy/gz` | Raw 16-bit gyroscope (+-4000 dps) |
 | `hx/hy/hz` | Raw 16-bit high-G accelerometer (+-320g) |
 
 Takes 5-10 seconds over BLE. Returns `{"type":"dump","status":"no_throw"}` if no capture exists.
 
-To convert raw values: multiply by `GYRO_SENS=0.070` for dps, `ACCEL_SENS=0.000488` for g, `HG_SENS=0.00977` for g.
+To convert raw values: multiply by `GYRO_SENS=0.140` for dps, `ACCEL_SENS=0.000488` for g, `HG_SENS=0.00977` for g.
 
 ---
 
@@ -445,7 +445,7 @@ The app should always listen for these even when not actively streaming live dat
 
 | Sensor | Chip | Range | ODR | Notes |
 |---|---|---|---|---|
-| Gyroscope | LSM6DSV320X | +-2000 dps | 960 Hz | Max measurable: 333 RPM. Above this, accel fallback. |
+| Gyroscope | LSM6DSV320X | +-4000 dps | 960 Hz | Max measurable: 666 RPM. Above this, accel fallback. |
 | Accelerometer | LSM6DSV320X | +-16 g | 960 Hz | Main accel for live + strapdown integration |
 | High-G Accel | LSM6DSV320X | +-320 g | 960 Hz | Used when main clips. Centripetal at high RPM. |
 | Magnetometer | LIS3MDL | +-8 gauss | 80 Hz | Not currently used for throw analysis |
