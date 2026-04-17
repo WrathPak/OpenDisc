@@ -555,6 +555,16 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
                 lastSeen: Date()
             ))
         }
+
+        // Auto-connect if this is the peripheral we were connected to last.
+        // Only if we're not already connecting/connected to something else.
+        if connectedPeripheral == nil,
+           connectionState != .connecting,
+           connectionState != .connected,
+           let savedID = UserDefaults.standard.string(forKey: "lastConnectedPeripheralID"),
+           peripheral.identifier.uuidString == savedID {
+            connect(to: peripheral)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -563,6 +573,9 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         pendingReconnect = nil
         peripheral.delegate = self
         peripheral.discoverServices([BLEConstants.nusServiceUUID, BLEConstants.deviceInfoUUID])
+        // Remember this peripheral so we auto-connect to it next launch.
+        UserDefaults.standard.set(peripheral.identifier.uuidString,
+                                  forKey: "lastConnectedPeripheralID")
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
