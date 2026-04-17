@@ -105,6 +105,9 @@ final class BLEManager: NSObject {
     /// Highest seq we've ACK'd already (so we don't re-ACK the same batch
     /// boundary twice).
     var dumpLastAckSeq: Int = -1
+    /// Highest seq N such that every seq 0..N has been received. ACKs use
+    /// this instead of the current seq so firmware doesn't skip over gaps.
+    var dumpHighestContigSeq: Int = -1
     /// Diagnostic: every call to handleDumpBinaryFrame increments this,
     /// whether or not the frame was accepted. Visible in the dashboard card
     /// so we can spot mismatches between "frames arrived at iOS" and
@@ -208,6 +211,7 @@ final class BLEManager: NSObject {
         dumpExpectedFrames = nil
         dumpPRNBatch = 0
         dumpLastAckSeq = -1
+        dumpHighestContigSeq = -1
         dumpFrameCallCount = 0
         dumpFrameDedupCount = 0
         dumpFrameHeaderRejectCount = 0
@@ -467,24 +471,29 @@ final class BLEManager: NSObject {
         }
 
         dumpReceivedFrames.insert(seq)
+        // Advance the highest-contiguous-seq counter. Only up through here
+        // is safe to ACK — firmware resumes from ackLast+1 and would skip
+        // any gaps otherwise.
+        while dumpReceivedFrames.contains(dumpHighestContigSeq + 1) {
+            dumpHighestContigSeq += 1
+        }
         if let totalFrames = dumpExpectedFrames, totalFrames > 0 {
             dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
         }
-        // Binary frames count as activity — if the batch-end status gets
-        // dropped, progress can still advance and the watchdog shouldn't fire.
         dumpWatchdogRetries = 0
         armDumpWatchdog()
 
-        // PRN (Nordic-DFU-style) flow control: ACK every `dumpPRNBatch`
-        // frames so firmware knows it's safe to send the next batch. We
-        // only ACK on batch boundaries (or on the very last frame) to keep
-        // RX-write overhead low.
-        if dumpPRNBatch > 0 {
-            let isBatchBoundary = (seq + 1) % dumpPRNBatch == 0
-            let isLastFrame = (dumpExpectedFrames.map { seq + 1 >= $0 } ?? false)
-            if (isBatchBoundary || isLastFrame) && seq > dumpLastAckSeq {
-                dumpLastAckSeq = seq
-                sendCommand(.dumpAck(last: seq))
+        // PRN flow control: ACK the highest CONTIGUOUS seq on batch
+        // boundaries (or when we've reached the last frame). If iOS missed
+        // a frame inside a batch, dumpHighestContigSeq stays behind and
+        // we skip the ACK — forcing firmware to retransmit the batch.
+        if dumpPRNBatch > 0 && dumpHighestContigSeq > dumpLastAckSeq {
+            let ackSeq = dumpHighestContigSeq
+            let isBatchBoundary = (ackSeq + 1) % dumpPRNBatch == 0
+            let isLastFrame = (dumpExpectedFrames.map { ackSeq + 1 >= $0 } ?? false)
+            if isBatchBoundary || isLastFrame {
+                dumpLastAckSeq = ackSeq
+                sendCommand(.dumpAck(last: ackSeq))
             }
         }
     }

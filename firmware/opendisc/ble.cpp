@@ -160,7 +160,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.0");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.1");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -297,37 +297,50 @@ static void handleDumpStart() {
 
   uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
   uint16_t nextFrame = 0;
+  constexpr uint8_t MAX_BATCH_RETRIES = 4;
   while (nextFrame < totalFrames && deviceConnected) {
-    // Send a batch.
     const uint16_t batchEnd =
       (nextFrame + DUMP_FRAMES_PER_BATCH < totalFrames)
         ? nextFrame + DUMP_FRAMES_PER_BATCH
         : totalFrames;
-    for (uint16_t f = nextFrame; f < batchEnd; f++) {
-      size_t len = buildDumpFrame(f, buf);
-      bleSendBinary(buf, len);
-      // Small intra-batch breathing room so the TX queue drains between
-      // rapid notifies. 15 ms × 4 frames = 60 ms per batch emission.
-      delay(15);
-    }
 
-    // Wait for iOS to ACK this batch. Timeout after 3s of silence so we
-    // don't hang forever if the client disappears.
-    dumpAckReceived = false;
-    const uint16_t waitMs = 3000;
-    uint16_t waited = 0;
-    while (!dumpAckReceived && waited < waitMs && deviceConnected) {
-      delay(5);
-      waited += 5;
+    // Retry the whole batch up to MAX_BATCH_RETRIES times on ACK timeout.
+    // CoreBluetooth sporadically drops notifications; iOS's dedup means
+    // replaying already-received frames is free (they're ignored). Only a
+    // frame iOS never received drives the ACK forward, so retries
+    // eventually get every frame through.
+    bool batchAcked = false;
+    for (uint8_t attempt = 0; attempt < MAX_BATCH_RETRIES && !batchAcked && deviceConnected; attempt++) {
+      for (uint16_t f = nextFrame; f < batchEnd; f++) {
+        size_t len = buildDumpFrame(f, buf);
+        bleSendBinary(buf, len);
+        delay(15);  // intra-batch pacing so rapid notifies can drain
+      }
+
+      // Wait for iOS to ACK. 1.5s per attempt is plenty — a healthy batch
+      // is ACK'd within ~50ms.
+      dumpAckReceived = false;
+      const uint16_t waitMs = 1500;
+      uint16_t waited = 0;
+      while (!dumpAckReceived && waited < waitMs && deviceConnected) {
+        delay(5);
+        waited += 5;
+      }
+      batchAcked = dumpAckReceived;
+      if (!batchAcked && attempt + 1 < MAX_BATCH_RETRIES) {
+        debugMsg("batch [%u..%u) retry %u",
+                 nextFrame, batchEnd, attempt + 1);
+      }
     }
-    if (!dumpAckReceived) {
-      debugMsg("dump ACK timeout at frame %u — aborting", batchEnd);
+    if (!batchAcked) {
+      debugMsg("dump ACK timeout at frame %u after %u retries — aborting",
+               batchEnd, MAX_BATCH_RETRIES);
       break;
     }
 
-    // iOS reports the highest seq it received. Resume from one past that.
-    // Normal case: dumpAckLastSeq == batchEnd - 1, so nextFrame = batchEnd.
-    // If iOS lost frames, dumpAckLastSeq is lower and we re-send the gap.
+    // Resume from one past the highest seq iOS confirmed. If iOS lost a
+    // frame inside the batch, dumpAckLastSeq will be lower than batchEnd-1
+    // and we'll re-send from the gap on the next iteration.
     if (dumpAckLastSeq + 1 >= batchEnd) {
       nextFrame = batchEnd;
     } else {
