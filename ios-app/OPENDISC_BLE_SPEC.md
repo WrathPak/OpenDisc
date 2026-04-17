@@ -170,6 +170,7 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
   "peak_g": 45.2,
   "hyzer": 12.5,
   "nose": -3.2,
+  "launch": 6.4,
   "wobble": 8.1,
   "duration_ms": 280,
   "release_idx": 412,
@@ -186,6 +187,7 @@ Arms the burst capture. The device transitions to `ARMED` state and waits for th
 | `peak_g` | float | g | Peak acceleration during capture (uses HG accel if main clips) |
 | `hyzer` | float | degrees | Hyzer angle at release, relative to throw direction. Positive = left edge down from behind the disc. |
 | `nose` | float | degrees | Nose angle at release, relative to throw direction. Positive = nose up. |
+| `launch` | float | degrees | Launch angle — vertical angle of the velocity vector at release. Positive = up, negative = down. `0` if strapdown integration failed or horizontal speed was too low to resolve a direction. |
 | `wobble` | float | degrees | RMS off-axis rotation over 100 ms after release |
 | `duration_ms` | int | ms | Time from first motion to release |
 | `release_idx` | int | — | Sample index of release point in ring buffer |

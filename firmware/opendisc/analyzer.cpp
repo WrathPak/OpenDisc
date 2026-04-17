@@ -367,6 +367,16 @@ ThrowMetrics analyzeThrow(const RawSample* ring,
     float vmag = sqrtf(vx*vx + vy*vy + vz*vz);
     m.mph = vmag * 2.23694f;
 
+    // Launch angle: vertical angle of the velocity vector at release.
+    // Positive = throwing up, negative = throwing down. 0 means flat.
+    // Only meaningful when horizontal speed is nonzero.
+    {
+      float hspd = sqrtf(vx*vx + vy*vy);
+      if (hspd > 0.1f) {
+        m.launch_angle_deg = atan2f(vz, hspd) * 180.0f / (float)M_PI;
+      }
+    }
+
     // Launch angles relative to the THROW DIRECTION, not body axes.
     // This makes angles independent of how the chip is mounted on the disc.
     //

@@ -54,6 +54,7 @@ struct ThrowMetrics {
   float peak_accel_g;
   float launch_hyzer_deg;
   float launch_nose_deg;
+  float launch_angle_deg;  // vertical angle of velocity vector at release (+up). 0 if strapdown failed.
   float wobble_deg;
   uint32_t duration_ms;
   int16_t release_index;       // -1 if not detected

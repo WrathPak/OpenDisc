@@ -4,6 +4,18 @@ Firmware changes that affect the iOS app. Check this after pulling new firmware.
 
 ---
 
+## 2026-04-17
+
+### New field: `launch` in `throw` response
+
+Firmware now emits `launch` alongside `hyzer` and `nose` — the vertical angle of the disc's velocity vector at release, in degrees. Positive = throwing up, negative = throwing down. Returns `0.0` when the strapdown integration can't resolve a direction (e.g. no stationary reference, or horizontal speed below 0.1 m/s).
+
+This is the third of TechDisc's six core metrics; add it to the throw detail grid. Decode `launch: Float` from `ThrowResponse`, persist as `ThrowData.launchAngle`, show on `ThrowDetailView`. See `ios-app/IOS_TODO.md` item 1 for full plan.
+
+Unlike hyzer, launch angle is directionally invariant — no left-hand flipping needed.
+
+---
+
 ## 2026-04-16
 
 ### Breaking: throw data schema changed

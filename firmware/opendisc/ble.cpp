@@ -293,12 +293,12 @@ void bleHandleCommand(const char* json) {
       snprintf(buf, sizeof(buf),
         "{\"type\":\"throw\",\"valid\":%s,\"rpm\":%.1f,"
         "\"mph\":%.2f,\"peak_g\":%.2f,"
-        "\"hyzer\":%.1f,\"nose\":%.1f,"
+        "\"hyzer\":%.1f,\"nose\":%.1f,\"launch\":%.1f,"
         "\"wobble\":%.1f,\"duration_ms\":%lu,"
         "\"release_idx\":%d,\"motion_start_idx\":%d,\"stationary_end\":%d}",
         m.valid ? "true" : "false",
         m.rpm, m.mph, m.peak_accel_g,
-        m.launch_hyzer_deg, m.launch_nose_deg, m.wobble_deg,
+        m.launch_hyzer_deg, m.launch_nose_deg, m.launch_angle_deg, m.wobble_deg,
         (unsigned long)m.duration_ms,
         m.release_index, m.motion_start_index, m.stationary_end);
       bleSendJson(buf);
