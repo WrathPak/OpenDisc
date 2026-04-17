@@ -8,5 +8,6 @@ Thumbs.db
 *.swp
 *.swo
 .claude/
+CLAUDE.md
 ios-app/OpenDisc/build/
 ios-app/OpenDisc/OpenDisc.xcodeproj/
