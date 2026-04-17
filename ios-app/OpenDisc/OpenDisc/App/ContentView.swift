@@ -23,7 +23,10 @@ struct ContentView: View {
                 throwType: $throwType,
                 throwHand: $throwHand,
                 storageWarning: storageWarning,
-                saveError: lastSaveError
+                saveError: lastSaveError,
+                dumpProgress: bleManager.isDumping ? bleManager.dumpProgress : nil,
+                dumpSampleCount: bleManager.dumpSamples.count,
+                dumpExpectedCount: bleManager.dumpExpectedCount
             )
             .tabItem {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
@@ -152,11 +155,21 @@ struct ContentView: View {
             pendingThrow = nil
             return
         }
+        // Sort by sample index so later consumers (TrajectoryEngine) get
+        // chronological order even if frames arrived out of order.
+        let sorted = samples.sorted { $0.i < $1.i }
         do {
-            let encoded = try JSONEncoder().encode(samples)
+            let encoded = try JSONEncoder().encode(sorted)
             throwData.rawSamples = encoded
             try modelContext.save()
-            print("[persistRawDump] saved \(encoded.count) bytes of raw samples")
+            print("[persistRawDump] saved \(encoded.count) bytes (\(sorted.count) samples)")
+            let expected = bleManager.dumpExpectedCount ?? 0
+            if expected > 0 && sorted.count < expected {
+                let pct = Int(Float(sorted.count) / Float(expected) * 100)
+                lastSaveError = "Trajectory partial: \(sorted.count)/\(expected) samples (\(pct)%). 3D view may be choppy — some BLE frames were dropped."
+            } else {
+                lastSaveError = nil
+            }
         } catch {
             lastSaveError = "Raw dump save failed: \(error)"
             print("[persistRawDump] SAVE FAILED: \(error)")

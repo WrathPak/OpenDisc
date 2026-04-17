@@ -95,6 +95,14 @@ final class BLEManager: NSObject {
     /// The `samples` field from the firmware's `dump:start` response
     /// (how many samples firmware *claimed* it would send).
     var dumpExpectedCount: Int?
+    /// Total frames firmware will send (binary protocol). Nil on the legacy
+    /// per-sample JSON protocol.
+    var dumpExpectedFrames: Int?
+    /// Set of frame seq numbers successfully decoded so far — used for progress
+    /// and to detect gaps.
+    var dumpReceivedFrames: Set<Int> = []
+    /// Progress 0...1 during active dump, nil when idle.
+    var dumpProgress: Float?
 
     // Error
     var error: BLEError?
@@ -171,7 +179,19 @@ final class BLEManager: NSObject {
     func stopCalibration()  { sendCommand(.calStop) }
     func getSettings()      { sendCommand(.settingsGet) }
     func requestIMUDiag()   { sendCommand(.imuDiag) }
-    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; dumpDecodeFailures = 0; dumpDecodeLastError = nil; dumpLastStatus = nil; dumpExpectedCount = nil; isDumping = true; sendCommand(.dumpRaw) }
+    func dumpRaw() {
+        dumpSamples.removeAll()
+        dumpReceivedFrames.removeAll()
+        dumpComplete = false
+        dumpDecodeFailures = 0
+        dumpDecodeLastError = nil
+        dumpLastStatus = nil
+        dumpExpectedCount = nil
+        dumpExpectedFrames = nil
+        dumpProgress = 0
+        isDumping = true
+        sendCommand(.dumpRaw)
+    }
     func setWifi(enabled: Bool) { sendCommand(enabled ? .wifiOn : .wifiOff) }
 
     func updateSettings(autoArm: Bool? = nil, triggerG: Float? = nil) {
@@ -193,6 +213,12 @@ final class BLEManager: NSObject {
     }
 
     private func handleResponse(data: Data) {
+        // First-byte discriminator: 0xFF = binary dump frame, 0x7B = JSON.
+        if let first = data.first, first == 0xFF {
+            handleDumpBinaryFrame(data: data)
+            return
+        }
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let typeString = json["type"] as? String,
               let type = BLEResponseType(rawValue: typeString) else { return }
@@ -261,13 +287,15 @@ final class BLEManager: NSObject {
         case .dump:
             if let response = try? decoder.decode(DumpStatusResponse.self, from: data) {
                 dumpLastStatus = response.status
-                if response.status == "start", let n = response.samples {
-                    dumpExpectedCount = n
+                if response.status == "start" {
+                    if let n = response.samples { dumpExpectedCount = n }
+                    if let f = response.frames { dumpExpectedFrames = f }
                 }
-                print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
+                print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) frames=\(response.frames ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
                 if response.status == "done" || response.status == "no_throw" {
                     isDumping = false
                     dumpComplete = response.status == "done"
+                    dumpProgress = nil
                 }
             } else {
                 let snippet = String(data: data, encoding: .utf8) ?? "<binary>"
@@ -276,18 +304,73 @@ final class BLEManager: NSObject {
             }
 
         case .d:
+            // Legacy per-sample JSON protocol. Kept for older firmware; new
+            // firmware sends a binary frame stream instead.
             do {
                 let sample = try decoder.decode(DumpSampleResponse.self, from: data)
                 dumpSamples.append(sample)
             } catch {
                 dumpDecodeFailures += 1
                 if dumpDecodeLastError == nil {
-                    // Capture first failure verbatim — this is what we need to see.
                     let snippet = String(data: data, encoding: .utf8) ?? "<binary>"
                     dumpDecodeLastError = "\(error) | payload: \(snippet.prefix(160))"
                     print("[BLE] d-sample decode failed: \(error)\n  payload: \(snippet)")
                 }
             }
+        }
+    }
+
+    /// Parse a 0xFF-prefixed binary dump frame. Format is:
+    ///   byte 0    : 0xFF (magic)
+    ///   byte 1    : version (currently 0x01)
+    ///   bytes 2-3 : seq (uint16 LE)
+    ///   byte 4    : count
+    ///   byte 5    : reserved
+    ///   bytes 6+  : `count` samples, each 10×int16 LE (i, ax..az, gx..gz, hx..hz)
+    private func handleDumpBinaryFrame(data: Data) {
+        guard data.count >= 6, data[0] == 0xFF, data[1] == 0x01 else {
+            dumpDecodeFailures += 1
+            dumpDecodeLastError = dumpDecodeLastError ?? "Bad binary header (len=\(data.count))"
+            return
+        }
+        let seq = Int(data[2]) | (Int(data[3]) << 8)
+        let count = Int(data[4])
+        let expectedLen = 6 + count * 20
+        guard data.count >= expectedLen else {
+            dumpDecodeFailures += 1
+            dumpDecodeLastError = dumpDecodeLastError ?? "Short binary frame seq=\(seq) got=\(data.count) want=\(expectedLen)"
+            return
+        }
+
+        func readI16(_ offset: Int) -> Int16 {
+            // little-endian, two's complement
+            let lo = UInt16(data[offset])
+            let hi = UInt16(data[offset + 1]) << 8
+            return Int16(bitPattern: lo | hi)
+        }
+
+        var offset = 6
+        for _ in 0..<count {
+            let sample = DumpSampleResponse(
+                type: "d",
+                i: Int(readI16(offset)),
+                ax: readI16(offset + 2),
+                ay: readI16(offset + 4),
+                az: readI16(offset + 6),
+                gx: readI16(offset + 8),
+                gy: readI16(offset + 10),
+                gz: readI16(offset + 12),
+                hx: readI16(offset + 14),
+                hy: readI16(offset + 16),
+                hz: readI16(offset + 18)
+            )
+            dumpSamples.append(sample)
+            offset += 20
+        }
+
+        dumpReceivedFrames.insert(seq)
+        if let totalFrames = dumpExpectedFrames, totalFrames > 0 {
+            dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
         }
     }
 }

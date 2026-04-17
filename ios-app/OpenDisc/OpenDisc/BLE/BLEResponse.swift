@@ -96,6 +96,9 @@ struct DumpStatusResponse: Decodable {
     let type: String
     let status: String
     let samples: Int?
+    let frames: Int?
+    let spf: Int?        // samples per frame (binary protocol)
+    let fmt: String?     // "bin1" = binary protocol v1
 }
 
 struct DumpSampleResponse: Codable {

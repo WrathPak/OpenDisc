@@ -342,7 +342,7 @@ WiFi is always on at boot. It only turns off when a BLE client explicitly reques
 
 ### 3.9 `dump_raw` — Raw Burst Data for Training
 
-Streams the full ring buffer from the most recent capture. 1920 samples at 960 Hz (1s pre-trigger + 1s post-trigger). Each sample is a separate TX notification.
+Streams the full ring buffer from the most recent capture. 1920 samples at 960 Hz (1s pre-trigger + 1s post-trigger). Uses a **binary-framed** protocol on the same TX characteristic as JSON messages; clients disambiguate by the leading byte (`0xFF` = binary frame, `0x7B` (`{`) = JSON).
 
 **Request:**
 ```json
@@ -350,25 +350,44 @@ Streams the full ring buffer from the most recent capture. 1920 samples at 960 H
 ```
 
 **Response sequence:**
-```json
-{"type":"dump","status":"start","samples":1920}
-{"type":"d","i":-960,"ax":26,"ay":-16,"az":2071,"gx":-1,"gy":2,"gz":-3,"hx":0,"hy":0,"hz":0}
-{"type":"d","i":-959,...}
+```text
+{"type":"dump","status":"start","samples":1920,"frames":240,"spf":8,"fmt":"bin1"}
+<binary frame 0>     // seq=0, 8 samples
+<binary frame 1>     // seq=1, 8 samples
 ...
-{"type":"d","i":959,...}
+<binary frame 239>   // seq=239, 8 samples (last frame may be shorter)
 {"type":"dump","status":"done"}
 ```
 
+If no capture exists: `{"type":"dump","status":"no_throw"}`.
+
+**Binary frame layout** (little-endian throughout):
+
+| Offset | Size | Field | Value |
+|---|---|---|---|
+| 0 | 1 byte  | magic    | `0xFF` |
+| 1 | 1 byte  | version  | `0x01` |
+| 2 | 2 bytes | seq      | frame index, `0 ≤ seq < frames` |
+| 4 | 1 byte  | count    | samples in this frame (≤ `spf`) |
+| 5 | 1 byte  | reserved | `0x00` |
+| 6 | 20 × count bytes | samples | packed int16 LE, 10 fields per sample |
+
+Each sample is 10 `int16 LE` values in this order: `i, ax, ay, az, gx, gy, gz, hx, hy, hz`.
+
 | Field | Description |
 |---|---|
-| `i` | Sample index relative to trigger. Negative = pre-trigger. |
-| `ax/ay/az` | Raw 16-bit accelerometer (main, +-16g) |
-| `gx/gy/gz` | Raw 16-bit gyroscope (+-4000 dps) |
-| `hx/hy/hz` | Raw 16-bit high-G accelerometer (+-320g) |
+| `i` | Sample index relative to trigger. Negative = pre-trigger, range `-960..959`. |
+| `ax/ay/az` | Raw 16-bit accelerometer (main, ±16g) |
+| `gx/gy/gz` | Raw 16-bit gyroscope (±4000 dps) |
+| `hx/hy/hz` | Raw 16-bit high-G accelerometer (±320g) |
 
-Takes 5-10 seconds over BLE. Returns `{"type":"dump","status":"no_throw"}` if no capture exists.
+Total frame size with `spf=8` is 166 bytes, which fits under the default 185-byte BLE notification MTU. Firmware paces ~15 ms per frame, so the full dump takes ~3–5 s over BLE.
 
 To convert raw values: multiply by `GYRO_SENS=0.140` for dps, `ACCEL_SENS=0.000488` for g, `HG_SENS=0.00977` for g.
+
+**Ordering and loss:** Frames are sent in sequential `seq` order but a client should not assume zero loss — track which seq numbers arrived, detect gaps, and sort the flattened sample list by `i` before using it.
+
+**Legacy protocol:** Older firmware (pre-2026-04-17) sent one `{"type":"d",...}` JSON notification per sample. Clients that still need to talk to old firmware can keep a `.d` handler — the new firmware never emits `d` frames, so the two code paths don't collide.
 
 ---
 
