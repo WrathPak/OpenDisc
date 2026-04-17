@@ -92,24 +92,24 @@ final class BLEManager: NSObject {
     /// notifications purely due to main-thread contention.
     var dumpProgress: Float?
 
-    // Hot-path dump state. @ObservationIgnored means SwiftUI does NOT
-    // re-render when these change. All mutations during the dump happen
-    // in handleDumpBinaryFrame at ~60 Hz; keeping them out of the
-    // observation graph is the fix for the notification-drop issue.
-    @ObservationIgnored var dumpSamples: [DumpSampleResponse] = []
-    @ObservationIgnored var dumpReceivedFrames: Set<Int> = []
-    @ObservationIgnored var dumpDecodeFailures: Int = 0
-    @ObservationIgnored var dumpDecodeLastError: String?
-    @ObservationIgnored var dumpLastStatus: String?
-    @ObservationIgnored var dumpExpectedCount: Int?
-    @ObservationIgnored var dumpExpectedFrames: Int?
-    @ObservationIgnored var dumpPRNBatch: Int = 0
-    @ObservationIgnored var dumpLastAckSeq: Int = -1
-    @ObservationIgnored var dumpHighestContigSeq: Int = -1
-    @ObservationIgnored var dumpFrameCallCount: Int = 0
-    @ObservationIgnored var dumpFrameDedupCount: Int = 0
-    @ObservationIgnored var dumpFrameHeaderRejectCount: Int = 0
-    @ObservationIgnored private var dumpLastProgressPublishAt: Date = .distantPast
+    // Hot-path dump state. nonisolated(unsafe) because these are mutated
+    // from the dedicated BLE dispatch queue (not the main actor), but
+    // are only ever touched from that one serial queue — no races.
+    // @ObservationIgnored keeps them out of SwiftUI's change-tracking graph.
+    @ObservationIgnored nonisolated(unsafe) var dumpSamples: [DumpSampleResponse] = []
+    @ObservationIgnored nonisolated(unsafe) var dumpReceivedFrames: Set<Int> = []
+    @ObservationIgnored nonisolated(unsafe) var dumpDecodeFailures: Int = 0
+    @ObservationIgnored nonisolated(unsafe) var dumpDecodeLastError: String?
+    @ObservationIgnored nonisolated(unsafe) var dumpLastStatus: String?
+    @ObservationIgnored nonisolated(unsafe) var dumpExpectedCount: Int?
+    @ObservationIgnored nonisolated(unsafe) var dumpExpectedFrames: Int?
+    @ObservationIgnored nonisolated(unsafe) var dumpPRNBatch: Int = 0
+    @ObservationIgnored nonisolated(unsafe) var dumpLastAckSeq: Int = -1
+    @ObservationIgnored nonisolated(unsafe) var dumpHighestContigSeq: Int = -1
+    @ObservationIgnored nonisolated(unsafe) var dumpFrameCallCount: Int = 0
+    @ObservationIgnored nonisolated(unsafe) var dumpFrameDedupCount: Int = 0
+    @ObservationIgnored nonisolated(unsafe) var dumpFrameHeaderRejectCount: Int = 0
+    @ObservationIgnored nonisolated(unsafe) private var dumpLastProgressPublishAt: Date = .distantPast
     /// Watchdog task that re-sends `dump_next` if a batch reply never arrives.
     @ObservationIgnored private var dumpWatchdog: Task<Void, Never>?
     /// Retries used in the current pull cycle.
@@ -125,6 +125,16 @@ final class BLEManager: NSObject {
     private var txCharacteristic: CBCharacteristic?
     private var pendingReconnect: CBPeripheral?
     private let decoder = JSONDecoder()
+
+    /// Dedicated serial queue that binary dump frame processing hops onto.
+    /// Delegate callbacks still land on main (so existing @MainActor state
+    /// mutations work), but as soon as we see a 0xFF binary frame we
+    /// dispatch it here so the main run loop is free to accept the next
+    /// CoreBluetooth callback.
+    nonisolated(unsafe) static let dumpProcessingQueue = DispatchQueue(
+        label: "com.opendisc.ble.dump",
+        qos: .userInitiated
+    )
 
     override init() {
         super.init()
@@ -407,12 +417,20 @@ final class BLEManager: NSObject {
     ///   byte 4    : count
     ///   byte 5    : reserved
     ///   bytes 6+  : `count` samples, each 10×int16 LE (i, ax..az, gx..gz, hx..hz)
-    private func handleDumpBinaryFrame(data: Data) {
+    /// Off-main-actor binary-frame processor. Runs on
+    /// BLEManager.dumpProcessingQueue, so SwiftUI renders on the main thread
+    /// can't starve CoreBluetooth's notification delivery to this handler.
+    /// Touches only nonisolated(unsafe) state; observable mutations
+    /// (dumpProgress) and main-actor calls (sendCommand) are dispatched
+    /// back to main explicitly.
+    nonisolated func processBinaryDumpFrameBG(_ data: Data) {
         dumpFrameCallCount += 1
         guard data.count >= 6, data[0] == 0xFF, data[1] == 0x01 else {
             dumpFrameHeaderRejectCount += 1
             dumpDecodeFailures += 1
-            dumpDecodeLastError = dumpDecodeLastError ?? "Bad binary header (len=\(data.count), first=\(data.first.map { String(format: "0x%02x", $0) } ?? "nil"))"
+            if dumpDecodeLastError == nil {
+                dumpDecodeLastError = "Bad binary header (len=\(data.count), first=\(data.first.map { String(format: "0x%02x", $0) } ?? "nil"))"
+            }
             return
         }
         let seq = Int(data[2]) | (Int(data[3]) << 8)
@@ -420,22 +438,18 @@ final class BLEManager: NSObject {
         let expectedLen = 6 + count * 20
         guard data.count >= expectedLen else {
             dumpDecodeFailures += 1
-            dumpDecodeLastError = dumpDecodeLastError ?? "Short binary frame seq=\(seq) got=\(data.count) want=\(expectedLen)"
+            if dumpDecodeLastError == nil {
+                dumpDecodeLastError = "Short binary frame seq=\(seq) got=\(data.count) want=\(expectedLen)"
+            }
             return
         }
 
-        // Dedup: if this seq was already decoded (e.g. firmware retransmitted
-        // after a watchdog retry), drop the payload silently.
         if dumpReceivedFrames.contains(seq) {
             dumpFrameDedupCount += 1
-            // Still counts as activity — keep watchdog alive.
-            dumpWatchdogRetries = 0
-            armDumpWatchdog()
             return
         }
 
         func readI16(_ offset: Int) -> Int16 {
-            // little-endian, two's complement
             let lo = UInt16(data[offset])
             let hi = UInt16(data[offset + 1]) << 8
             return Int16(bitPattern: lo | hi)
@@ -461,40 +475,43 @@ final class BLEManager: NSObject {
         }
 
         dumpReceivedFrames.insert(seq)
-        // Advance the highest-contiguous-seq counter. Only up through here
-        // is safe to ACK — firmware resumes from ackLast+1 and would skip
-        // any gaps otherwise.
         while dumpReceivedFrames.contains(dumpHighestContigSeq + 1) {
             dumpHighestContigSeq += 1
         }
-        // Progress is THE @Observable mutation we cannot avoid (the UI needs
-        // it to draw the bar), so throttle it to ~10 Hz rather than firing
-        // on every received frame. At 240 frames/sec we'd otherwise trigger
-        // 240 SwiftUI re-renders per second — the starvation that caused
-        // this whole saga.
+
+        // Throttled progress publish to main (the only UI-driving mutation).
         if let totalFrames = dumpExpectedFrames, totalFrames > 0 {
             let now = Date()
             if now.timeIntervalSince(dumpLastProgressPublishAt) >= 0.1 {
                 dumpLastProgressPublishAt = now
-                dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
+                let p = Float(dumpReceivedFrames.count) / Float(totalFrames)
+                DispatchQueue.main.async { [weak self] in
+                    self?.dumpProgress = p
+                }
             }
         }
-        dumpWatchdogRetries = 0
-        armDumpWatchdog()
 
-        // PRN flow control: ACK the highest CONTIGUOUS seq on batch
-        // boundaries (or when we've reached the last frame). If iOS missed
-        // a frame inside a batch, dumpHighestContigSeq stays behind and
-        // we skip the ACK — forcing firmware to retransmit the batch.
+        // PRN ACK on batch boundary — dispatch to main because sendCommand
+        // must run on CoreBluetooth's (main) queue.
         if dumpPRNBatch > 0 && dumpHighestContigSeq > dumpLastAckSeq {
             let ackSeq = dumpHighestContigSeq
             let isBatchBoundary = (ackSeq + 1) % dumpPRNBatch == 0
             let isLastFrame = (dumpExpectedFrames.map { ackSeq + 1 >= $0 } ?? false)
             if isBatchBoundary || isLastFrame {
                 dumpLastAckSeq = ackSeq
-                sendCommand(.dumpAck(last: ackSeq))
+                DispatchQueue.main.async { [weak self] in
+                    self?.sendCommand(.dumpAck(last: ackSeq))
+                }
             }
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Legacy main-actor binary handler. Kept so handleResponse's 0xFF guard
+    // still works if a binary frame accidentally reaches that path. New
+    // normal flow uses processBinaryDumpFrameBG above.
+    private func handleDumpBinaryFrame(data: Data) {
+        processBinaryDumpFrameBG(data)
     }
 }
 
@@ -639,17 +656,28 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
         }
 
         if characteristic.uuid == BLEConstants.txCharUUID {
+            // Binary dump frames are time-critical: if we process them on
+            // the main actor, SwiftUI re-renders or other main-thread work
+            // starves CoreBluetooth's delivery pipe and notifications get
+            // dropped. Dispatch to the dedicated dump queue so this method
+            // returns fast and main stays available for the NEXT callback.
+            if data.first == 0xFF {
+                let copy = Data(data)
+                Self.dumpProcessingQueue.async { [weak self] in
+                    self?.processBinaryDumpFrameBG(copy)
+                }
+                return
+            }
             handleResponse(data: data)
             return
         }
 
         if characteristic.uuid == BLEConstants.dumpCharUUID {
-            // Binary dump frame via ATT-level INDICATE — guaranteed-delivery
-            // flow control. The 0xFF magic check isn't strictly necessary
-            // here since only binary frames come through this characteristic,
-            // but handleDumpBinaryFrame() already validates the header so we
-            // just forward.
-            handleDumpBinaryFrame(data: data)
+            // Legacy INDICATE channel; same background dispatch as above.
+            let copy = Data(data)
+            Self.dumpProcessingQueue.async { [weak self] in
+                self?.processBinaryDumpFrameBG(copy)
+            }
             return
         }
     }
