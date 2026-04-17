@@ -89,6 +89,12 @@ final class BLEManager: NSObject {
     var dumpDecodeFailures: Int = 0
     /// Snapshot of the last decode error for diagnostics.
     var dumpDecodeLastError: String?
+    /// The `status` field from the most recent `dump` response
+    /// (`start`, `done`, `no_throw`, or whatever firmware sent).
+    var dumpLastStatus: String?
+    /// The `samples` field from the firmware's `dump:start` response
+    /// (how many samples firmware *claimed* it would send).
+    var dumpExpectedCount: Int?
 
     // Error
     var error: BLEError?
@@ -165,7 +171,7 @@ final class BLEManager: NSObject {
     func stopCalibration()  { sendCommand(.calStop) }
     func getSettings()      { sendCommand(.settingsGet) }
     func requestIMUDiag()   { sendCommand(.imuDiag) }
-    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; dumpDecodeFailures = 0; dumpDecodeLastError = nil; isDumping = true; sendCommand(.dumpRaw) }
+    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; dumpDecodeFailures = 0; dumpDecodeLastError = nil; dumpLastStatus = nil; dumpExpectedCount = nil; isDumping = true; sendCommand(.dumpRaw) }
     func setWifi(enabled: Bool) { sendCommand(enabled ? .wifiOn : .wifiOff) }
 
     func updateSettings(autoArm: Bool? = nil, triggerG: Float? = nil) {
@@ -254,6 +260,10 @@ final class BLEManager: NSObject {
 
         case .dump:
             if let response = try? decoder.decode(DumpStatusResponse.self, from: data) {
+                dumpLastStatus = response.status
+                if response.status == "start", let n = response.samples {
+                    dumpExpectedCount = n
+                }
                 print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
                 if response.status == "done" || response.status == "no_throw" {
                     isDumping = false
@@ -261,6 +271,7 @@ final class BLEManager: NSObject {
                 }
             } else {
                 let snippet = String(data: data, encoding: .utf8) ?? "<binary>"
+                dumpLastStatus = "undecodable"
                 print("[BLE] dump status decode failed: \(snippet.prefix(120))")
             }
 
