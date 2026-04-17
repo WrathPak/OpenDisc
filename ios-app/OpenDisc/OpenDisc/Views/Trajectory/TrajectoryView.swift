@@ -27,7 +27,34 @@ struct TrajectoryView: View {
                     legend
                         .padding(.bottom, 24)
                 }
+                .overlay(alignment: .topLeading) {
+                    diagnostics
+                        .padding(.leading, 12)
+                        .padding(.top, 8)
+                }
         }
+    }
+
+    private var diagnostics: some View {
+        let points = trajectory.points
+        let moving = points.filter { $0.speed > 0.05 }.count
+        let extent = trajectory.bounds.max - trajectory.bounds.min
+        let speeds = points.map { $0.speed }
+        let sMin = speeds.min() ?? 0
+        let sMax = speeds.max() ?? 0
+        let lines = [
+            "points: \(points.count)  moving: \(moving)",
+            String(format: "extent m: %.2f×%.2f×%.2f", extent.x, extent.y, extent.z),
+            "releaseIdx: \(trajectory.releaseIndex)",
+            String(format: "speed m/s: %.2f…%.2f", sMin, sMax)
+        ]
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(lines, id: \.self) { Text($0) }
+        }
+        .font(.caption2.monospaced())
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var legend: some View {

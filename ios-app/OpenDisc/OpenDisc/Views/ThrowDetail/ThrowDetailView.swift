@@ -113,6 +113,17 @@ struct ThrowDetailView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+
+                    if let csvURL = rawSamplesCSVURL() {
+                        ShareLink(item: csvURL) {
+                            Label("Export raw samples (CSV)", systemImage: "square.and.arrow.up")
+                                .font(.subheadline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                    }
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "circle.slash")
@@ -285,6 +296,25 @@ struct ThrowDetailView: View {
             trajectoryError = error.description
         } catch {
             trajectoryError = "Trajectory reconstruction failed: \(error)"
+        }
+    }
+
+    private func rawSamplesCSVURL() -> URL? {
+        guard let samples = throwData.decodedSamples, !samples.isEmpty else { return nil }
+        let ts = ISO8601DateFormatter().string(from: throwData.timestamp)
+        var csv = ""
+        csv += "# opendisc-throw timestamp=\(ts) samples=\(samples.count) releaseIdx=\(throwData.releaseIdx) calRx=\(throwData.calRx) calRy=\(throwData.calRy) mph=\(throwData.mph) durationMS=\(throwData.durationMS)\n"
+        csv += "i,ax,ay,az,gx,gy,gz,hx,hy,hz\n"
+        for s in samples {
+            csv += "\(s.i),\(s.ax),\(s.ay),\(s.az),\(s.gx),\(s.gy),\(s.gz),\(s.hx),\(s.hy),\(s.hz)\n"
+        }
+        let safeTs = ts.replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("opendisc-throw-\(safeTs).csv")
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
         }
     }
 }
