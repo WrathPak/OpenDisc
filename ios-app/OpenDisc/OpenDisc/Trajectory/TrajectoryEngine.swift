@@ -35,6 +35,28 @@ struct Trajectory {
 ///   cm of error; over the full 2 s burst expect 10-20 cm.
 /// - Orientation is more robust. Gyro bias estimated from the stationary
 ///   window keeps the quaternion from drifting meaningfully over 2 s.
+/// Reason trajectory reconstruction failed, with enough context to diagnose.
+enum TrajectoryError: Error, CustomStringConvertible {
+    case tooFewSamples(count: Int)
+    case noStationaryWindow(samplesSearched: Int)
+    case lowGravityReading(magnitude: Float, samplesSearched: Int)
+
+    var description: String {
+        switch self {
+        case .tooFewSamples(let count):
+            return "Only \(count) samples in the dump — need at least 64."
+        case .noStationaryWindow(let searched):
+            return "Couldn't find a still reference window in \(searched) samples."
+        case .lowGravityReading(let magnitude, let searched):
+            return String(format:
+                "Accel reading during the quietest window was only %.2f g — need ~1.0 g. "
+                + "Tried %d search positions. The disc may have been in motion for "
+                + "the entire burst, or the IMU is miscalibrated.",
+                magnitude, searched)
+        }
+    }
+}
+
 enum TrajectoryEngine {
     /// Compute trajectory from raw burst samples.
     ///
@@ -45,22 +67,29 @@ enum TrajectoryEngine {
     ///     point, or nil to auto-detect from motion profile.
     ///   - calRx: Calibrated chip-to-CoM offset X (meters). Pass 0 if uncal.
     ///   - calRy: Calibrated chip-to-CoM offset Y (meters). Pass 0 if uncal.
-    /// - Returns: Reconstructed trajectory, or nil if the sample set is too
-    ///   short to find a stationary reference.
+    /// - Returns: Reconstructed trajectory.
+    /// - Throws: `TrajectoryError` describing why reconstruction failed.
     static func compute(samples: [DumpSampleResponse],
                         releaseIndex: Int? = nil,
                         calRx: Float = 0,
-                        calRy: Float = 0) -> Trajectory? {
-        guard samples.count >= 64 else { return nil }
+                        calRy: Float = 0) throws -> Trajectory {
+        guard samples.count >= 64 else {
+            throw TrajectoryError.tooFewSamples(count: samples.count)
+        }
 
-        // 1. Find quietest 16-sample window in the first half of the buffer
-        //    (pre-trigger region) to use as stationary reference.
-        let searchEnd = min(samples.count / 2, samples.count - 16)
+        // 1. Find the quietest 16-sample window anywhere in the buffer.
+        //    (Earlier code restricted search to the first half; that
+        //    assumed the pre-trigger region was stationary, which breaks
+        //    when the thrower has already wound up their backswing before
+        //    the ring fills. Searching the whole buffer gives us a chance
+        //    of finding the stationary moment before the wind-up or after
+        //    catching.)
+        let searchEnd = max(16, samples.count - 16)
         guard let stationaryStart = findStationaryWindow(samples: samples,
                                                          start: 0,
                                                          end: searchEnd,
                                                          length: 16) else {
-            return nil
+            throw TrajectoryError.noStationaryWindow(samplesSearched: samples.count)
         }
         let stationaryEnd = stationaryStart + 16
 
@@ -78,7 +107,10 @@ enum TrajectoryEngine {
         // 3. Initialize world-to-body quaternion so that gravity in the body
         //    frame maps to (0, 0, -1) in the world frame (i.e. -Z is down).
         let gravityMag = simd_length(gravityBody)
-        guard gravityMag > 0.5 else { return nil }
+        guard gravityMag > 0.5 else {
+            throw TrajectoryError.lowGravityReading(magnitude: gravityMag,
+                                                    samplesSearched: samples.count)
+        }
         let gravityBodyNormalized = gravityBody / gravityMag
         // Rotate body "down" vector to world "down" vector
         let worldDown = SIMD3<Float>(0, 0, -1)
