@@ -113,7 +113,22 @@ struct ThrowDetailView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "circle.slash")
+                            .foregroundStyle(.secondary)
+                        Text("3D trajectory unavailable — raw sample dump wasn't captured for this throw.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassEffect(.regular)
                 }
+
+                Text(String(format: "Raw samples stored: %d bytes", throwData.rawSamples?.count ?? 0))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
 
                 if let msg = trajectoryError {
                     Text(msg)
