@@ -61,6 +61,15 @@ struct ContentView: View {
         .onChange(of: bleManager.dumpComplete) { _, complete in
             if complete { persistRawDump() }
         }
+        .onChange(of: bleManager.isDumping) { wasDumping, nowDumping in
+            // Dump finished. If dumpComplete never flipped true (e.g. firmware
+            // returned `no_throw`), persistRawDump still runs so we can log it
+            // and clear pendingThrow instead of silently stranding it.
+            if wasDumping && !nowDumping && !bleManager.dumpComplete {
+                print("[dump] ended without a `done` status — firmware may have returned no_throw")
+                persistRawDump()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .voiceSettingsChanged)) { _ in
             voiceSettings = VoiceSettings.load()
         }
@@ -124,15 +133,25 @@ struct ContentView: View {
     }
 
     private func persistRawDump() {
-        guard let throwData = pendingThrow else { return }
+        guard let throwData = pendingThrow else {
+            print("[persistRawDump] no pendingThrow — skipping")
+            return
+        }
         let samples = bleManager.dumpSamples
+        print("[persistRawDump] dump complete with \(samples.count) samples")
         guard !samples.isEmpty else {
+            lastSaveError = "Trajectory dump returned 0 samples. 3D view won't be available for this throw."
             pendingThrow = nil
             return
         }
-        if let encoded = try? JSONEncoder().encode(samples) {
+        do {
+            let encoded = try JSONEncoder().encode(samples)
             throwData.rawSamples = encoded
-            try? modelContext.save()
+            try modelContext.save()
+            print("[persistRawDump] saved \(encoded.count) bytes of raw samples")
+        } catch {
+            lastSaveError = "Raw dump save failed: \(error)"
+            print("[persistRawDump] SAVE FAILED: \(error)")
         }
         pendingThrow = nil
     }
