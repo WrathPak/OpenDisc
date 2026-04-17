@@ -11,3 +11,4 @@ Thumbs.db
 CLAUDE.md
 ios-app/OpenDisc/build/
 ios-app/OpenDisc/OpenDisc.xcodeproj/
+ios-app/OpenDisc/Local.xcconfig

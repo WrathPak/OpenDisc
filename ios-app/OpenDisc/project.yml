@@ -18,12 +18,14 @@ targets:
     platform: iOS
     sources:
       - OpenDisc
+    configFiles:
+      Debug: Local.xcconfig
+      Release: Local.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.opendisc.app
         INFOPLIST_FILE: OpenDisc/Info.plist
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: REDACTED
         PRODUCT_NAME: OpenDisc
     info:
       path: OpenDisc/Info.plist
