@@ -101,6 +101,17 @@ final class ThrowData {
         throwType == ThrowType.forehand.rawValue ? 0.30 : 0.50
     }
 
+    /// Simulated carry in feet. Treat as a rough first-order estimate —
+    /// the simulator uses a single neutral-driver aero profile.
+    var predictedCarryFeet: Float? {
+        guard mph > 0 else { return nil }
+        return FlightSimulator.predict(
+            mph: mph,
+            launchAngleDeg: launchAngle,
+            hyzerDeg: hyzer
+        )?.carryFeet
+    }
+
     var displayThrowType: String {
         let type = ThrowType(rawValue: throwType) ?? .backhand
         let hand = ThrowHand(rawValue: throwHand) ?? .right

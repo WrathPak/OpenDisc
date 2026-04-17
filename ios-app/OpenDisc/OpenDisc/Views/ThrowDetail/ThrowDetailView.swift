@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct ThrowDetailView: View {
     @Bindable var throwData: ThrowData
@@ -92,6 +93,11 @@ struct ThrowDetailView: View {
                         value: "\(throwData.durationMS)",
                         unit: "ms"
                     )
+                    carryCard
+                }
+
+                if throwData.predictedCarryFeet != nil {
+                    flightPathChart
                 }
 
                 // 3D trajectory
@@ -192,6 +198,51 @@ struct ThrowDetailView: View {
             tint = .gray
         }
         return MetricCard(title: "Advance Ratio", value: value, unit: unit, tint: tint)
+    }
+
+    private var carryCard: some View {
+        let value: String
+        let unit: String
+        if let feet = throwData.predictedCarryFeet {
+            value = String(format: "%.0f", feet)
+            unit = "ft predicted"
+        } else {
+            value = "--"
+            unit = "carry"
+        }
+        return MetricCard(title: "Carry", value: value, unit: unit, tint: .cyan)
+    }
+
+    @ViewBuilder
+    private var flightPathChart: some View {
+        if let result = FlightSimulator.predict(
+            mph: throwData.mph,
+            launchAngleDeg: throwData.launchAngle,
+            hyzerDeg: throwData.hyzer
+        ) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Predicted flight (side view)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Chart {
+                    ForEach(Array(result.path.enumerated()), id: \.offset) { (_, p) in
+                        LineMark(
+                            x: .value("Distance", p.x * 3.28084),
+                            y: .value("Height", p.z * 3.28084)
+                        )
+                        .foregroundStyle(.cyan)
+                    }
+                }
+                .chartXAxisLabel("ft")
+                .chartYAxisLabel("ft")
+                .frame(height: 140)
+                .padding(10)
+                .glassEffect(.regular)
+                Text(String(format: "Carry %.0f ft · Apex %.0f ft", result.carryFeet, result.apexFeet))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     private var wobbleColor: Color {
