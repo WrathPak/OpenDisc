@@ -82,48 +82,38 @@ final class BLEManager: NSObject {
 
     // Raw dump
     var isDumping: Bool = false
-    var dumpSamples: [DumpSampleResponse] = []
     var dumpComplete: Bool = false
-    /// Counts `d`-typed BLE responses that failed to decode. Exposed so the UI
-    /// can explain why dumpSamples is empty.
-    var dumpDecodeFailures: Int = 0
-    /// Snapshot of the last decode error for diagnostics.
-    var dumpDecodeLastError: String?
-    /// The `status` field from the most recent `dump` response
-    /// (`start`, `done`, `no_throw`, or whatever firmware sent).
-    var dumpLastStatus: String?
-    /// The `samples` field from the firmware's `dump:start` response
-    /// (how many samples firmware *claimed* it would send).
-    var dumpExpectedCount: Int?
-    /// Total frames firmware will send (binary protocol). Nil on the legacy
-    /// per-sample JSON protocol.
-    var dumpExpectedFrames: Int?
-    /// Packet-receipt-notification batch size negotiated at `start`. iOS
-    /// writes `dump_ack` every this-many received frames as Nordic-DFU-style
-    /// flow control. 0 means ACKs disabled (legacy modes).
-    var dumpPRNBatch: Int = 0
-    /// Highest seq we've ACK'd already (so we don't re-ACK the same batch
-    /// boundary twice).
-    var dumpLastAckSeq: Int = -1
-    /// Highest seq N such that every seq 0..N has been received. ACKs use
-    /// this instead of the current seq so firmware doesn't skip over gaps.
-    var dumpHighestContigSeq: Int = -1
-    /// Diagnostic: every call to handleDumpBinaryFrame increments this,
-    /// whether or not the frame was accepted. Visible in the dashboard card
-    /// so we can spot mismatches between "frames arrived at iOS" and
-    /// "samples actually stored".
-    var dumpFrameCallCount: Int = 0
-    var dumpFrameDedupCount: Int = 0
-    var dumpFrameHeaderRejectCount: Int = 0
-    /// Set of frame seq numbers successfully decoded so far — used for progress
-    /// and to detect gaps.
-    var dumpReceivedFrames: Set<Int> = []
-    /// Progress 0...1 during active dump, nil when idle.
+    /// Progress 0...1 during active dump, nil when idle. Updated on a
+    /// throttle (every ~100 ms), NOT on every frame — SwiftUI re-renders
+    /// triggered by high-frequency property mutations were saturating the
+    /// main run loop and starving CoreBluetooth's notification delivery.
+    /// Confirmed via a Mac-side BLE client (bleak) that firmware transmits
+    /// every frame correctly; the iOS app was dropping ~99% of
+    /// notifications purely due to main-thread contention.
     var dumpProgress: Float?
+
+    // Hot-path dump state. @ObservationIgnored means SwiftUI does NOT
+    // re-render when these change. All mutations during the dump happen
+    // in handleDumpBinaryFrame at ~60 Hz; keeping them out of the
+    // observation graph is the fix for the notification-drop issue.
+    @ObservationIgnored var dumpSamples: [DumpSampleResponse] = []
+    @ObservationIgnored var dumpReceivedFrames: Set<Int> = []
+    @ObservationIgnored var dumpDecodeFailures: Int = 0
+    @ObservationIgnored var dumpDecodeLastError: String?
+    @ObservationIgnored var dumpLastStatus: String?
+    @ObservationIgnored var dumpExpectedCount: Int?
+    @ObservationIgnored var dumpExpectedFrames: Int?
+    @ObservationIgnored var dumpPRNBatch: Int = 0
+    @ObservationIgnored var dumpLastAckSeq: Int = -1
+    @ObservationIgnored var dumpHighestContigSeq: Int = -1
+    @ObservationIgnored var dumpFrameCallCount: Int = 0
+    @ObservationIgnored var dumpFrameDedupCount: Int = 0
+    @ObservationIgnored var dumpFrameHeaderRejectCount: Int = 0
+    @ObservationIgnored private var dumpLastProgressPublishAt: Date = .distantPast
     /// Watchdog task that re-sends `dump_next` if a batch reply never arrives.
-    private var dumpWatchdog: Task<Void, Never>?
+    @ObservationIgnored private var dumpWatchdog: Task<Void, Never>?
     /// Retries used in the current pull cycle.
-    private var dumpWatchdogRetries: Int = 0
+    @ObservationIgnored private var dumpWatchdogRetries: Int = 0
 
     // Error
     var error: BLEError?
@@ -477,8 +467,17 @@ final class BLEManager: NSObject {
         while dumpReceivedFrames.contains(dumpHighestContigSeq + 1) {
             dumpHighestContigSeq += 1
         }
+        // Progress is THE @Observable mutation we cannot avoid (the UI needs
+        // it to draw the bar), so throttle it to ~10 Hz rather than firing
+        // on every received frame. At 240 frames/sec we'd otherwise trigger
+        // 240 SwiftUI re-renders per second — the starvation that caused
+        // this whole saga.
         if let totalFrames = dumpExpectedFrames, totalFrames > 0 {
-            dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
+            let now = Date()
+            if now.timeIntervalSince(dumpLastProgressPublishAt) >= 0.1 {
+                dumpLastProgressPublishAt = now
+                dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
+            }
         }
         dumpWatchdogRetries = 0
         armDumpWatchdog()
