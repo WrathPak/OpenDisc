@@ -103,6 +103,10 @@ final class BLEManager: NSObject {
     var dumpReceivedFrames: Set<Int> = []
     /// Progress 0...1 during active dump, nil when idle.
     var dumpProgress: Float?
+    /// Watchdog task that re-sends `dump_next` if a batch reply never arrives.
+    private var dumpWatchdog: Task<Void, Never>?
+    /// Retries used in the current pull cycle.
+    private var dumpWatchdogRetries: Int = 0
 
     // Error
     var error: BLEError?
@@ -191,6 +195,46 @@ final class BLEManager: NSObject {
         dumpProgress = 0
         isDumping = true
         sendCommand(.dumpRaw)
+    }
+
+    /// Pull the next batch of binary frames from firmware. The pull-based
+    /// protocol reliably stays under NimBLE's TX queue depth — iOS paces
+    /// the overall transfer by only asking for the next batch after the
+    /// previous one arrives.
+    func dumpNext() {
+        sendCommand(.dumpNext)
+        armDumpWatchdog()
+    }
+
+    /// Cancel any pending watchdog and arm a fresh 3-second timer. If we
+    /// don't hear back from firmware (a new binary frame OR a status update)
+    /// within the window, we retry dump_next up to 3 times before giving up.
+    private func armDumpWatchdog() {
+        dumpWatchdog?.cancel()
+        dumpWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run { [weak self] in
+                guard let self, self.isDumping else { return }
+                if self.dumpWatchdogRetries < 3 {
+                    self.dumpWatchdogRetries += 1
+                    print("[BLE] dump watchdog: no reply — retrying dump_next (\(self.dumpWatchdogRetries)/3)")
+                    self.sendCommand(.dumpNext)
+                    self.armDumpWatchdog()
+                } else {
+                    print("[BLE] dump watchdog: giving up after 3 retries")
+                    self.isDumping = false
+                    self.dumpComplete = false
+                    self.dumpLastStatus = "timeout"
+                    self.dumpProgress = nil
+                }
+            }
+        }
+    }
+
+    private func resetDumpWatchdog() {
+        dumpWatchdog?.cancel()
+        dumpWatchdog = nil
+        dumpWatchdogRetries = 0
     }
     func setWifi(enabled: Bool) { sendCommand(enabled ? .wifiOn : .wifiOff) }
 
@@ -292,10 +336,22 @@ final class BLEManager: NSObject {
                     if let f = response.frames { dumpExpectedFrames = f }
                 }
                 print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) frames=\(response.frames ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
-                if response.status == "done" || response.status == "no_throw" {
+                // Every status reply resets the retry counter — we heard
+                // *something* from firmware.
+                dumpWatchdogRetries = 0
+                switch response.status {
+                case "start", "batch":
+                    // Pull-based protocol: ask for the next batch. Firmware
+                    // will reply with N binary frames + either another
+                    // "batch" status or "done" when finished.
+                    dumpNext()
+                case "done", "no_throw":
                     isDumping = false
                     dumpComplete = response.status == "done"
                     dumpProgress = nil
+                    resetDumpWatchdog()
+                default:
+                    break
                 }
             } else {
                 let snippet = String(data: data, encoding: .utf8) ?? "<binary>"

@@ -342,24 +342,43 @@ WiFi is always on at boot. It only turns off when a BLE client explicitly reques
 
 ### 3.9 `dump_raw` — Raw Burst Data for Training
 
-Streams the full ring buffer from the most recent capture. 1920 samples at 960 Hz (1s pre-trigger + 1s post-trigger). Uses a **binary-framed** protocol on the same TX characteristic as JSON messages; clients disambiguate by the leading byte (`0xFF` = binary frame, `0x7B` (`{`) = JSON).
+Streams the full ring buffer from the most recent capture using a **pull-based, binary-framed** protocol on the same TX characteristic as JSON messages; clients disambiguate by the leading byte (`0xFF` = binary frame, `0x7B` (`{`) = JSON). 1920 samples at 960 Hz (1s pre-trigger + 1s post-trigger).
 
 **Request:**
 ```json
 {"cmd":"dump_raw"}
 ```
 
-**Response sequence:**
+**Response sequence** (pull-based; client drives pacing):
 ```text
-{"type":"dump","status":"start","samples":1920,"frames":240,"spf":8,"fmt":"bin1"}
-<binary frame 0>     // seq=0, 8 samples
-<binary frame 1>     // seq=1, 8 samples
-...
-<binary frame 239>   // seq=239, 8 samples (last frame may be shorter)
-{"type":"dump","status":"done"}
+// 1) Client opens a session
+iOS -> {"cmd":"dump_raw"}
+FW  <- {"type":"dump","status":"start","samples":1920,"frames":240,
+            "spf":8,"batch":8,"fmt":"bin1","mode":"pull"}
+
+// 2) Client pulls each batch
+iOS -> {"cmd":"dump_next"}
+FW  <- <binary frame 0>
+       <binary frame 1>
+       ...
+       <binary frame 7>           // up to `batch` frames
+       {"type":"dump","status":"batch","next":8}
+
+iOS -> {"cmd":"dump_next"}
+FW  <- <binary frame 8> ... <binary frame 15>
+       {"type":"dump","status":"batch","next":16}
+
+// 3) On the final batch firmware sends `done` instead of `batch`
+iOS -> {"cmd":"dump_next"}
+FW  <- <binary frame 232> ... <binary frame 239>
+       {"type":"dump","status":"done"}
 ```
 
-If no capture exists: `{"type":"dump","status":"no_throw"}`.
+If no capture exists: `{"type":"dump","status":"no_throw"}`. If the client sends `dump_next` without having opened a session: `{"type":"dump","status":"idle"}`.
+
+The pull model keeps the ESP32 NimBLE TX queue from backing up: the client only requests a new batch after the previous one has arrived. Batch size is controlled by firmware (currently 8 frames per pull) and communicated in the `start` message.
+
+Clients should arm a ~3 s watchdog on each `dump_next` and retry a few times before giving up — individual BLE notifications can still be lost.
 
 **Binary frame layout** (little-endian throughout):
 
