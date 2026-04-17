@@ -5,7 +5,6 @@ struct DiscsView: View {
     @Query(sort: \Disc.brand) private var discs: [Disc]
     @Environment(\.modelContext) private var modelContext
     @State private var showingAddDisc = false
-    @State private var editingDisc: Disc?
 
     var body: some View {
         Group {
@@ -25,9 +24,6 @@ struct DiscsView: View {
         }
         .sheet(isPresented: $showingAddDisc) {
             DiscFormView()
-        }
-        .sheet(item: $editingDisc) { disc in
-            DiscFormView(disc: disc)
         }
     }
 
@@ -51,9 +47,7 @@ struct DiscsView: View {
     private var discList: some View {
         List {
             ForEach(discs) { disc in
-                Button {
-                    editingDisc = disc
-                } label: {
+                NavigationLink(destination: DiscDetailView(disc: disc)) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(disc.displayName)
@@ -71,9 +65,6 @@ struct DiscsView: View {
                             }
                         }
                         Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
                     }
                 }
             }

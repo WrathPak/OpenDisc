@@ -50,6 +50,9 @@ final class ThrowData {
     var calRx: Float = 0
     var calRy: Float = 0
 
+    /// Vertical launch angle (deg). +up, -down. 0 when strapdown failed (same as mph < 0).
+    var launchAngle: Float = 0
+
     /// Decoded raw samples, or nil if not available.
     var decodedSamples: [DumpSampleResponse]? {
         guard let data = rawSamples else { return nil }
@@ -73,6 +76,40 @@ final class ThrowData {
     var displayHyzer: String {
         let label = hyzer >= 0 ? "hyzer" : "anhy"
         return String(format: "%.1f\u{00B0} %@", abs(hyzer), label)
+    }
+
+    /// Launch angle display. Returns "--" when unavailable, "flat" when near zero, else "6.4° up/down".
+    var displayLaunch: String {
+        guard mph >= 0 else { return "--" }
+        if abs(launchAngle) < 0.5 { return "flat" }
+        let dir = launchAngle >= 0 ? "up" : "down"
+        return String(format: "%.1f\u{00B0} %@", abs(launchAngle), dir)
+    }
+
+    /// Dimensionless ratio of rim tangential speed to forward speed.
+    /// nil when mph is invalid. Target ~0.50 BH, ~0.30 FH.
+    var advanceRatio: Float? {
+        guard mph > 0 else { return nil }
+        let radius = disc?.radius ?? 0.105
+        let rpsRad = rpm * 2 * .pi / 60
+        let mps = mph * 0.44704
+        guard mps > 0 else { return nil }
+        return (rpsRad * radius) / mps
+    }
+
+    var advanceRatioTarget: Float {
+        throwType == ThrowType.forehand.rawValue ? 0.30 : 0.50
+    }
+
+    /// Simulated carry in feet. Treat as a rough first-order estimate —
+    /// the simulator uses a single neutral-driver aero profile.
+    var predictedCarryFeet: Float? {
+        guard mph > 0 else { return nil }
+        return FlightSimulator.predict(
+            mph: mph,
+            launchAngleDeg: launchAngle,
+            hyzerDeg: hyzer
+        )?.carryFeet
     }
 
     var displayThrowType: String {

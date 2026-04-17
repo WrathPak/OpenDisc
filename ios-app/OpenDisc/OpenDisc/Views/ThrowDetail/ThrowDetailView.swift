@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct ThrowDetailView: View {
     @Bindable var throwData: ThrowData
@@ -79,6 +80,8 @@ struct ThrowDetailView: View {
                         unit: "degrees",
                         tint: .green
                     )
+                    launchCard
+                    advanceRatioCard
                     MetricCard(
                         title: "Wobble",
                         value: String(format: "%.1f", throwData.wobble),
@@ -90,6 +93,11 @@ struct ThrowDetailView: View {
                         value: "\(throwData.durationMS)",
                         unit: "ms"
                     )
+                    carryCard
+                }
+
+                if throwData.predictedCarryFeet != nil {
+                    flightPathChart
                 }
 
                 // 3D trajectory
@@ -149,6 +157,90 @@ struct ThrowDetailView: View {
         .sheet(isPresented: $showingTrajectory) {
             if let trajectory {
                 TrajectoryView(trajectory: trajectory)
+            }
+        }
+    }
+
+    private var launchCard: some View {
+        let available = throwData.mph >= 0
+        let title = "Launch"
+        let value: String
+        let unit: String
+        if !available {
+            value = "--"
+            unit = "unavailable"
+        } else if abs(throwData.launchAngle) < 0.5 {
+            value = "0"
+            unit = "flat"
+        } else {
+            value = String(format: "%.1f", abs(throwData.launchAngle))
+            unit = throwData.launchAngle >= 0 ? "deg up" : "deg down"
+        }
+        return MetricCard(title: title, value: value, unit: unit, tint: .green)
+    }
+
+    private var advanceRatioCard: some View {
+        let ratio = throwData.advanceRatio
+        let target = throwData.advanceRatioTarget
+        let value: String
+        let unit: String
+        let tint: Color
+        if let ratio {
+            value = String(format: "%.0f%%", ratio * 100)
+            unit = String(format: "target %.0f%%", target * 100)
+            let deviation = abs(ratio - target) / target
+            if deviation <= 0.10 { tint = .green }
+            else if deviation <= 0.20 { tint = .yellow }
+            else { tint = .orange }
+        } else {
+            value = "--"
+            unit = "advance ratio"
+            tint = .gray
+        }
+        return MetricCard(title: "Advance Ratio", value: value, unit: unit, tint: tint)
+    }
+
+    private var carryCard: some View {
+        let value: String
+        let unit: String
+        if let feet = throwData.predictedCarryFeet {
+            value = String(format: "%.0f", feet)
+            unit = "ft predicted"
+        } else {
+            value = "--"
+            unit = "carry"
+        }
+        return MetricCard(title: "Carry", value: value, unit: unit, tint: .cyan)
+    }
+
+    @ViewBuilder
+    private var flightPathChart: some View {
+        if let result = FlightSimulator.predict(
+            mph: throwData.mph,
+            launchAngleDeg: throwData.launchAngle,
+            hyzerDeg: throwData.hyzer
+        ) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Predicted flight (side view)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Chart {
+                    ForEach(Array(result.path.enumerated()), id: \.offset) { (_, p) in
+                        LineMark(
+                            x: .value("Distance", p.x * 3.28084),
+                            y: .value("Height", p.z * 3.28084)
+                        )
+                        .foregroundStyle(.cyan)
+                    }
+                }
+                .chartXAxisLabel("ft")
+                .chartYAxisLabel("ft")
+                .frame(height: 140)
+                .padding(10)
+                .glassEffect(.regular)
+                Text(String(format: "Carry %.0f ft · Apex %.0f ft", result.carryFeet, result.apexFeet))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }

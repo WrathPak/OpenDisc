@@ -10,6 +10,7 @@ struct DiscFormView: View {
     @State private var model: String = ""
     @State private var color: String = ""
     @State private var notes: String = ""
+    @State private var radiusMM: Double = 105
 
     var body: some View {
         NavigationStack {
@@ -18,6 +19,23 @@ struct DiscFormView: View {
                     TextField("Brand", text: $brand)
                     TextField("Model", text: $model)
                     TextField("Color (optional)", text: $color)
+                }
+
+                Section {
+                    HStack {
+                        Text("Radius")
+                        Spacer()
+                        TextField("105", value: $radiusMM, format: .number)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 80)
+                        Text("mm")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Rim Radius")
+                } footer: {
+                    Text("Used for advance-ratio calculation. Default 105 mm fits most drivers.")
                 }
 
                 Section("Notes") {
@@ -42,19 +60,23 @@ struct DiscFormView: View {
                     model = disc.model
                     color = disc.color
                     notes = disc.notes
+                    radiusMM = Double(disc.radius * 1000)
                 }
             }
         }
     }
 
     private func save() {
+        let clampedMM = min(max(radiusMM, 80), 130)
+        let radiusM = Float(clampedMM / 1000)
         if let disc {
             disc.brand = brand
             disc.model = model
             disc.color = color
             disc.notes = notes
+            disc.radius = radiusM
         } else {
-            let newDisc = Disc(brand: brand, model: model, color: color, notes: notes)
+            let newDisc = Disc(brand: brand, model: model, color: color, notes: notes, radius: radiusM)
             modelContext.insert(newDisc)
         }
         try? modelContext.save()

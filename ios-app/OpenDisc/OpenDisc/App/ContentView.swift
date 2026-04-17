@@ -28,6 +28,11 @@ struct ContentView: View {
                     Label("History", systemImage: "list.bullet.clipboard")
                 }
 
+            StatsView()
+                .tabItem {
+                    Label("Stats", systemImage: "chart.bar.xaxis")
+                }
+
             CalibrationView()
                 .tabItem {
                     Label("Calibrate", systemImage: "scope")
@@ -82,8 +87,16 @@ struct ContentView: View {
         throwData.releaseIdx = response.release_idx
         throwData.calRx = status?.calRX ?? 0
         throwData.calRy = status?.calRY ?? 0
+        throwData.launchAngle = response.launch ?? 0
         modelContext.insert(throwData)
         try? modelContext.save()
+
+        // PR check against all persisted throws.
+        let allThrows = (try? modelContext.fetch(FetchDescriptor<ThrowData>())) ?? []
+        if let message = PRService.checkForPR(candidate: throwData, history: allThrows) {
+            HapticManager.armed()
+            VoiceManager.announcePR(message, settings: voiceSettings)
+        }
 
         // Kick off the raw dump so we can reconstruct the trajectory later.
         pendingThrow = throwData
