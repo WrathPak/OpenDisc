@@ -63,7 +63,7 @@ struct ContentView: View {
     }
 
     private func saveThrow() {
-        guard let response = bleManager.lastThrow, response.valid else { return }
+        guard let response = bleManager.lastThrow else { return }
         let status = bleManager.deviceStatus
         let throwData = ThrowData(
             timestamp: Date(),

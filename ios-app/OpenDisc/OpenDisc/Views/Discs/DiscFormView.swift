@@ -57,6 +57,7 @@ struct DiscFormView: View {
             let newDisc = Disc(brand: brand, model: model, color: color, notes: notes)
             modelContext.insert(newDisc)
         }
+        try? modelContext.save()
         dismiss()
     }
 }
