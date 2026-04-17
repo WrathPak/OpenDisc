@@ -177,24 +177,8 @@ void setup() {
   initMag();
   Serial.println("[OK] Sensors ready");
 
-  // WiFi
-  Serial.printf("[WIFI] Connecting to %s", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.printf("\n[WIFI] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-
-  // mDNS: http://opendisc.local/
-  if (MDNS.begin("opendisc")) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.println("[MDNS] http://opendisc.local/");
-  } else {
-    Serial.println("[MDNS] Failed to start");
-  }
-
-  // Web routes
+  // Web routes — register before WiFi so server.begin() can run whenever
+  // the STA link comes up (either here, or later in the reconnection loop).
   server.on("/", handleRoot);
   server.on("/api/live", handleLive);
   server.on("/api/arm", handleArm);
@@ -209,12 +193,35 @@ void setup() {
   server.on("/api/eis_test", handleEisTest);
   server.on("/api/cal/start", handleCalStart);
   server.on("/api/cal/stop", handleCalStop);
-  server.begin();
 
-  Serial.printf("[WEB] Server at http://%s/ (or http://opendisc.local/)\n\n", WiFi.localIP().toString().c_str());
-
-  // BLE
+  // BLE first — advertising must be available even when WiFi can't associate
+  // (e.g. user is away from home), so the iOS app can still discover the disc.
   initBLE();
+
+  // WiFi: attempt the home SSID with a bounded timeout. If it fails (away
+  // from home, AP down, wrong creds), fall through and let the periodic
+  // reconnection loop retry — BLE stays up the whole time.
+  Serial.printf("[WIFI] Connecting to %s", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WIFI] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    if (MDNS.begin("opendisc")) {
+      MDNS.addService("http", "tcp", 80);
+      Serial.println("[MDNS] http://opendisc.local/");
+    } else {
+      Serial.println("[MDNS] Failed to start");
+    }
+    server.begin();
+    Serial.printf("[WEB] Server at http://%s/ (or http://opendisc.local/)\n\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\n[WIFI] Not connected — BLE still active, will retry in background");
+  }
 }
 
 
@@ -326,8 +333,10 @@ void loop() {
   server.handleClient();
   bleTick();
 
-  // WiFi power management: BLE client can disable WiFi for battery savings
-  static bool wifiRunning = true;
+  // WiFi power management: BLE client can disable WiFi for battery savings.
+  // Seed wifiRunning from actual link state so a failed boot-time associate
+  // (e.g. away from home) still lets the restore branch retry.
+  static bool wifiRunning = (WiFi.status() == WL_CONNECTED);
   static unsigned long lastWifiCheck = 0;
   if (millis() - lastWifiCheck > 2000) {
     lastWifiCheck = millis();
