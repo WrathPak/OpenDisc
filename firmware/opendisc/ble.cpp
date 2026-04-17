@@ -114,7 +114,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.0");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.1");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -128,11 +128,15 @@ void initBLE() {
   Serial.println("[BLE] Advertising as OpenDisc");
 }
 
+// Send a notification with the data passed in directly. Avoids the
+// setValue() + notify() race where rapid successive setValue calls overwrite
+// the stored characteristic value before the BLE task has transmitted the
+// previous notification. NimBLE's notify(value, length) overload copies the
+// payload into its own mbuf, so each call is independent.
 void bleSendJson(const char* json) {
   if (!deviceConnected || !pTxChar) return;
   size_t len = strlen(json);
-  pTxChar->setValue((const uint8_t*)json, len);
-  pTxChar->notify();
+  pTxChar->notify((const uint8_t*)json, len);
   debugMsg("BLE TX %d bytes", len);
 }
 
@@ -140,8 +144,7 @@ void bleSendJson(const char* json) {
 // by the leading byte (0xFF = binary, 0x7B = JSON '{').
 void bleSendBinary(const uint8_t* data, size_t len) {
   if (!deviceConnected || !pTxChar) return;
-  pTxChar->setValue(data, len);
-  pTxChar->notify();
+  pTxChar->notify(data, len);
 }
 
 bool bleClientConnected() {
@@ -449,11 +452,14 @@ void bleHandleCommand(const char* json) {
         }
 
         bleSendBinary(buf, off);
-        // Pacing: one frame per ~15ms stays under the default iOS connection
-        // interval (15-30ms, 1 notification per interval) without flooding
-        // the TX queue. 240 frames × 15ms ≈ 3.6s total — acceptable.
-        delay(15);
+        // Pacing: one frame per ~25ms comfortably below iOS's 15-30ms
+        // connection interval so the NimBLE TX queue never backs up.
+        // 240 frames × 25ms ≈ 6s total — acceptable.
+        delay(25);
       }
+      // Small trailing buffer before the `done` marker so the last binary
+      // frame has time to actually leave the TX queue.
+      delay(50);
       bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
       debugMsg("dump_raw: complete");
     }
