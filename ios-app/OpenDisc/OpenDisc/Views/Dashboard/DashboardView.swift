@@ -8,6 +8,8 @@ struct DashboardView: View {
     @Binding var selectedDisc: Disc?
     @Binding var throwType: ThrowType
     @Binding var throwHand: ThrowHand
+    var storageWarning: String? = nil
+    var saveError: String? = nil
 
     private var recentMPHSeries: [(Int, Float)] {
         throwsDesc.prefix(30)
@@ -25,6 +27,19 @@ struct DashboardView: View {
                         connectionState: bleManager.connectionState,
                         deviceState: bleManager.deviceState
                     )
+
+                    if let storageWarning {
+                        errorBanner(title: "Storage",
+                                    message: storageWarning,
+                                    systemImage: "exclamationmark.octagon.fill",
+                                    tint: .red)
+                    }
+                    if let saveError {
+                        errorBanner(title: "Last throw didn't save",
+                                    message: saveError,
+                                    systemImage: "exclamationmark.triangle.fill",
+                                    tint: .orange)
+                    }
 
                     // Throw config selectors
                     HStack(spacing: 12) {
@@ -80,6 +95,24 @@ struct DashboardView: View {
                 .glassEffect(.regular.tint(.green.opacity(0.15)))
             }
         }
+    }
+
+    private func errorBanner(title: String, message: String, systemImage: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .glassEffect(.regular.tint(tint.opacity(0.2)))
     }
 
     private var sparkline: some View {
