@@ -91,7 +91,8 @@ struct SettingsView: View {
                                 peak_g: 45.2, hyzer: 12.5,
                                 nose: -3.2, wobble: 8.1,
                                 duration_ms: 280, release_idx: 0,
-                                motion_start_idx: 0, stationary_end: 0
+                                motion_start_idx: 0, stationary_end: 0,
+                                launch: 6.4
                             )
                             VoiceManager.announceThrow(sample, settings: voice)
                         }

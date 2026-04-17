@@ -82,6 +82,7 @@ struct ContentView: View {
         throwData.releaseIdx = response.release_idx
         throwData.calRx = status?.calRX ?? 0
         throwData.calRy = status?.calRY ?? 0
+        throwData.launchAngle = response.launch ?? 0
         modelContext.insert(throwData)
         try? modelContext.save()
 

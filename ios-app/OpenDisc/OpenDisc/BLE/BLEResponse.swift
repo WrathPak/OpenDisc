@@ -36,6 +36,9 @@ struct ThrowResponse: Decodable {
     let release_idx: Int
     let motion_start_idx: Int
     let stationary_end: Int
+    // Launch angle (vertical angle of the velocity vector at release).
+    // Optional: older firmware doesn't emit this field.
+    let launch: Float?
 }
 
 struct StateEvent: Decodable {

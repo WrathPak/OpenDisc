@@ -65,6 +65,10 @@ struct ThrowEditView: View {
                     metricRow("RPM", throwData.displayRPM)
                     metricRow("Hyzer", throwData.displayHyzer)
                     metricRow("Nose", String(format: "%.1f\u{00B0}", throwData.nose))
+                    metricRow("Launch", throwData.displayLaunch)
+                    if let ratio = throwData.advanceRatio {
+                        metricRow("Advance Ratio", String(format: "%.0f%%", ratio * 100))
+                    }
                     metricRow("Wobble", String(format: "%.1f\u{00B0}", throwData.wobble))
                     metricRow("Peak G", String(format: "%.1f g", throwData.peakG))
                 }

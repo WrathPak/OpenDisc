@@ -79,6 +79,8 @@ struct ThrowDetailView: View {
                         unit: "degrees",
                         tint: .green
                     )
+                    launchCard
+                    advanceRatioCard
                     MetricCard(
                         title: "Wobble",
                         value: String(format: "%.1f", throwData.wobble),
@@ -151,6 +153,45 @@ struct ThrowDetailView: View {
                 TrajectoryView(trajectory: trajectory)
             }
         }
+    }
+
+    private var launchCard: some View {
+        let available = throwData.mph >= 0
+        let title = "Launch"
+        let value: String
+        let unit: String
+        if !available {
+            value = "--"
+            unit = "unavailable"
+        } else if abs(throwData.launchAngle) < 0.5 {
+            value = "0"
+            unit = "flat"
+        } else {
+            value = String(format: "%.1f", abs(throwData.launchAngle))
+            unit = throwData.launchAngle >= 0 ? "deg up" : "deg down"
+        }
+        return MetricCard(title: title, value: value, unit: unit, tint: .green)
+    }
+
+    private var advanceRatioCard: some View {
+        let ratio = throwData.advanceRatio
+        let target = throwData.advanceRatioTarget
+        let value: String
+        let unit: String
+        let tint: Color
+        if let ratio {
+            value = String(format: "%.0f%%", ratio * 100)
+            unit = String(format: "target %.0f%%", target * 100)
+            let deviation = abs(ratio - target) / target
+            if deviation <= 0.10 { tint = .green }
+            else if deviation <= 0.20 { tint = .yellow }
+            else { tint = .orange }
+        } else {
+            value = "--"
+            unit = "advance ratio"
+            tint = .gray
+        }
+        return MetricCard(title: "Advance Ratio", value: value, unit: unit, tint: tint)
     }
 
     private var wobbleColor: Color {
