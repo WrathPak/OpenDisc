@@ -20,6 +20,30 @@
 #include "ble.h"
 #include "page.h"
 
+// ─── Forward declarations ───────────────────────────────────
+// Arduino IDE auto-generates these from ctags output, but arduino-cli 1.4+
+// doesn't, so declare them explicitly to stay toolchain-portable.
+void loadSettings();
+void saveSettings();
+void saveCalRadius();
+void updateLiveMetrics();
+void burstSample();
+float computeRadius();
+void handleRoot();
+void handleArm();
+void handleStatus();
+void handleDump();
+void handleThrow();
+void handleCalDump();
+void handleDebugLog();
+void handleImuDiag();
+void handleSettings();
+void handleEisTest();
+void handleSetFsG();
+void handleCalStart();
+void handleCalStop();
+void handleLive();
+
 // ─── WiFi ───────────────────────────────────────────────────
 const char* WIFI_SSID = "Dino-Main";
 const char* WIFI_PASS = "goodlife123";
