@@ -138,9 +138,15 @@ struct ContentView: View {
             return
         }
         let samples = bleManager.dumpSamples
-        print("[persistRawDump] dump complete with \(samples.count) samples")
+        let failures = bleManager.dumpDecodeFailures
+        let firstError = bleManager.dumpDecodeLastError ?? "(no decode error recorded)"
+        print("[persistRawDump] dump complete — samples=\(samples.count) decodeFailures=\(failures)")
         guard !samples.isEmpty else {
-            lastSaveError = "Trajectory dump returned 0 samples. 3D view won't be available for this throw."
+            if failures > 0 {
+                lastSaveError = "Trajectory dump: \(failures) samples failed to decode, 0 stored. First error: \(firstError)"
+            } else {
+                lastSaveError = "Trajectory dump returned 0 samples (firmware streamed nothing). 3D view unavailable for this throw."
+            }
             pendingThrow = nil
             return
         }
