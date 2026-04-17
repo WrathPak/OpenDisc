@@ -114,7 +114,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.2");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.3");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -411,7 +411,12 @@ void bleHandleCommand(const char* json) {
     #define EXT_POST_TRIGGER 960
     #define EXT_RING_SIZE (EXT_PRE_TRIGGER + EXT_POST_TRIGGER)
     constexpr uint16_t SAMPLES_PER_FRAME = 8;
-    constexpr uint16_t FRAMES_PER_BATCH  = 8;
+    // One frame per pull. The ESP32 NimBLE TX queue reliably drops any
+    // notification sent in a burst after the first; sending one frame at a
+    // time and waiting for the client to ack with another dump_next keeps
+    // the queue from getting ahead of iOS's consumption rate. Cost is
+    // round-trip latency per frame, but the total dump is still <10s.
+    constexpr uint16_t FRAMES_PER_BATCH  = 1;
 
     // Per-dump state (persists across dump_next calls).
     static bool     dumpActive    = false;
@@ -482,16 +487,13 @@ void bleHandleCommand(const char* json) {
           }
 
           bleSendBinary(buf, off);
-          // Small gap so frames leave the queue before we pile up the next.
-          // 15 ms × 8 frames = 120ms per batch — plenty of headroom even if
-          // the NimBLE TX queue is only a few deep.
-          delay(15);
           sentThisBatch++;
           dumpNextFrame++;
         }
 
-        // A brief trailing pause so the last binary frame in the batch is
-        // fully transmitted before we publish the batch marker.
+        // Let the binary frame actually leave the TX queue before the status
+        // JSON follows — otherwise they share a connection event and either
+        // the frame or the status gets clobbered.
         delay(20);
 
         if (dumpNextFrame >= dumpTotalFrames) {

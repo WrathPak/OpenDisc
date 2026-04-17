@@ -398,6 +398,15 @@ final class BLEManager: NSObject {
             return
         }
 
+        // Dedup: if this seq was already decoded (e.g. firmware retransmitted
+        // after a watchdog retry), drop the payload silently.
+        if dumpReceivedFrames.contains(seq) {
+            // Still counts as activity — keep watchdog alive.
+            dumpWatchdogRetries = 0
+            armDumpWatchdog()
+            return
+        }
+
         func readI16(_ offset: Int) -> Int16 {
             // little-endian, two's complement
             let lo = UInt16(data[offset])
@@ -428,6 +437,10 @@ final class BLEManager: NSObject {
         if let totalFrames = dumpExpectedFrames, totalFrames > 0 {
             dumpProgress = Float(dumpReceivedFrames.count) / Float(totalFrames)
         }
+        // Binary frames count as activity — if the batch-end status gets
+        // dropped, progress can still advance and the watchdog shouldn't fire.
+        dumpWatchdogRetries = 0
+        armDumpWatchdog()
     }
 }
 
