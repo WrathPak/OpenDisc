@@ -1,8 +1,11 @@
 import SwiftUI
 import AVFoundation
+import SwiftData
 
 struct SettingsView: View {
     @Environment(BLEManager.self) private var bleManager
+    @Environment(StorageStatus.self) private var storageStatus
+    @Environment(\.modelContext) private var modelContext
     @State private var autoArm: Bool = true
     @State private var triggerG: Float = 3.0
     @State private var wifiEnabled: Bool = true
@@ -10,6 +13,8 @@ struct SettingsView: View {
     @State private var triggerDebounce: Task<Void, Never>?
     @State private var voice = VoiceSettings.load()
     @State private var appSettings = AppSettings.load()
+    @State private var showingResetConfirm = false
+    @State private var resetMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -144,8 +149,35 @@ struct SettingsView: View {
                         bleManager.disconnect()
                     }
                 }
+
+                Section {
+                    Button("Reset local data", role: .destructive) {
+                        showingResetConfirm = true
+                    }
+                } header: {
+                    Text("Storage")
+                } footer: {
+                    if storageStatus.inMemoryFallback, let err = storageStatus.lastError {
+                        Text("Store failed to open. Resetting will delete the broken store file so the app can create a fresh one on next launch.\n\n\(err)")
+                            .foregroundStyle(.red)
+                    } else {
+                        Text("Deletes all saved throws and discs on this device. Use only if storage is broken or you want a clean slate.")
+                    }
+                }
             }
             .navigationTitle("Settings")
+            .confirmationDialog("Delete all throws and discs?",
+                                isPresented: $showingResetConfirm,
+                                titleVisibility: .visible) {
+                Button("Delete everything", role: .destructive) { resetLocalData() }
+            } message: {
+                Text("This can't be undone. The app will need to be re-launched.")
+            }
+            .alert("Reset", isPresented: .constant(resetMessage != nil), actions: {
+                Button("OK") { resetMessage = nil }
+            }, message: {
+                Text(resetMessage ?? "")
+            })
             .onAppear {
                 bleManager.getSettings()
             }
@@ -156,6 +188,30 @@ struct SettingsView: View {
                 settingsLoaded = true
             }
         }
+    }
+
+    /// Wipes the persistent store files. If the container is healthy we also
+    /// delete all model rows first; if it failed to open, we just remove the
+    /// store files. Either way, the next app launch creates a fresh store.
+    private func resetLocalData() {
+        resetMessage = nil
+        if !storageStatus.inMemoryFallback {
+            do {
+                try modelContext.delete(model: ThrowData.self)
+                try modelContext.delete(model: Disc.self)
+                try modelContext.save()
+            } catch {
+                resetMessage = "Row delete failed: \(error)\n\nAttempting file-level wipe anyway."
+            }
+        }
+        if let url = storageStatus.storeURL {
+            let fm = FileManager.default
+            let siblings = [url,
+                            url.appendingPathExtension("shm"),
+                            url.appendingPathExtension("wal")]
+            for p in siblings { try? fm.removeItem(at: p) }
+        }
+        resetMessage = (resetMessage ?? "") + "Local data cleared. Quit the app from the App Switcher and re-open to start fresh."
     }
 
     private var speechRateLabel: String {
