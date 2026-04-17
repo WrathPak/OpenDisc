@@ -5,7 +5,8 @@
  * Serves a web UI for live readings, burst capture, and radius calibration.
  *
  * Wiring:  GPIO6=SDA  GPIO7=SCL  3.3V=VCC  GND=GND
- * Board:   ESP32C6 Dev Module, Default 4MB with spiffs
+ * Board:   ESP32C6 Dev Module, Partition: Minimal SPIFFS
+ *          (1.9MB APP with OTA / 128KB SPIFFS — sketch has outgrown the 1.2MB default).
  */
 
 #include <WiFi.h>
