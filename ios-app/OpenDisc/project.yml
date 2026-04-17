@@ -36,7 +36,7 @@ targets:
           - bluetooth-central
         CFBundleDisplayName: OpenDisc
         CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "10"
+        CFBundleVersion: "11"
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations:
