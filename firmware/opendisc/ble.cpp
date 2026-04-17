@@ -114,7 +114,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.1");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.2");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -383,85 +383,129 @@ void bleHandleCommand(const char* json) {
     debugMsg("WiFi enabled by BLE client");
     bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi on.\"}");
 
-  } else if (strcmp(cmd, "dump_raw") == 0) {
-    // Binary-framed ring dump. iOS receives frames on the same TX characteristic
-    // and disambiguates by the leading byte (0xFF = binary dump frame).
+  } else if (strcmp(cmd, "dump_raw") == 0 || strcmp(cmd, "dump_next") == 0) {
+    // Pull-based binary ring-buffer dump.
     //
-    // Each frame is 6-byte header + up to 8 samples × 20 bytes = 166 bytes max,
-    // which fits under the default 185-byte BLE notification MTU.
+    // Push-style streaming (even at 25 ms pacing) reliably overflows the
+    // ESP32 NimBLE TX queue once it gets going — after ~17 frames the rest
+    // vanish. With a pull-based protocol the client (iOS) controls the rate:
+    // it requests a small batch, we send it, it acks by requesting the next.
     //
-    // Frame header:
-    //   byte 0    : 0xFF           magic
-    //   byte 1    : 0x01           protocol version
-    //   bytes 2-3 : seq (uint16 LE) — frame index, 0..N-1
-    //   byte 4    : count          — number of samples in this frame
-    //   byte 5    : reserved (0)
-    // Followed by `count` samples, each 10×int16 LE in order:
-    //   i, ax, ay, az, gx, gy, gz, hx, hy, hz
+    // Flow:
+    //   iOS -> {"cmd":"dump_raw"}
+    //   FW  <- {"type":"dump","status":"start","samples":1920,"frames":240,
+    //                "spf":8,"fmt":"bin1","batch":8}
+    //   (iOS pulls)
+    //   iOS -> {"cmd":"dump_next"}
+    //   FW  <- <binary frame>*N + {"type":"dump","status":"batch","sent":N}
+    //   (loop)
+    //   FW  <- {"type":"dump","status":"done"} when all frames sent
+    //
+    // Batch of 8 frames per pull keeps us well under NimBLE's TX queue
+    // ceiling and only costs one round-trip per batch (~30ms of iOS BLE
+    // latency). 30 batches × 35ms ≈ 1-2s total round-trip overhead, plus
+    // the actual frame transmission time.
     extern RawSample ring[];
     extern uint16_t triggerIndex;
     #define EXT_PRE_TRIGGER 960
     #define EXT_POST_TRIGGER 960
     #define EXT_RING_SIZE (EXT_PRE_TRIGGER + EXT_POST_TRIGGER)
     constexpr uint16_t SAMPLES_PER_FRAME = 8;
+    constexpr uint16_t FRAMES_PER_BATCH  = 8;
 
-    if (!hasLastThrow) {
-      bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
+    // Per-dump state (persists across dump_next calls).
+    static bool     dumpActive    = false;
+    static uint16_t dumpTotalFrames = 0;
+    static uint16_t dumpNextFrame = 0;
+    static uint16_t dumpRingStart = 0;
+
+    if (strcmp(cmd, "dump_raw") == 0) {
+      // Initialize a new dump session.
+      if (!hasLastThrow) {
+        bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
+        dumpActive = false;
+      } else {
+        const uint16_t totalSamples = EXT_RING_SIZE;
+        dumpTotalFrames = (totalSamples + SAMPLES_PER_FRAME - 1) / SAMPLES_PER_FRAME;
+        dumpRingStart   = (triggerIndex + totalSamples - EXT_PRE_TRIGGER) % totalSamples;
+        dumpNextFrame   = 0;
+        dumpActive      = true;
+
+        char startMsg[192];
+        snprintf(startMsg, sizeof(startMsg),
+          "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,"
+          "\"spf\":%u,\"fmt\":\"bin1\",\"batch\":%u,\"mode\":\"pull\"}",
+          totalSamples, dumpTotalFrames, SAMPLES_PER_FRAME, FRAMES_PER_BATCH);
+        bleSendJson(startMsg);
+        debugMsg("dump_raw: %u frames ready, waiting for dump_next",
+                 dumpTotalFrames);
+      }
     } else {
-      const uint16_t totalSamples = EXT_RING_SIZE;
-      const uint16_t totalFrames = (totalSamples + SAMPLES_PER_FRAME - 1) / SAMPLES_PER_FRAME;
-      const uint16_t ringStart = (triggerIndex + totalSamples - EXT_PRE_TRIGGER) % totalSamples;
-      debugMsg("dump_raw: %u samples in %u frames (binary)", totalSamples, totalFrames);
+      // dump_next — send up to FRAMES_PER_BATCH frames, then a batch marker.
+      if (!dumpActive) {
+        bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
+      } else {
+        const uint16_t totalSamples = EXT_RING_SIZE;
+        uint8_t buf[6 + SAMPLES_PER_FRAME * 20];
+        uint16_t sentThisBatch = 0;
 
-      char startMsg[160];
-      snprintf(startMsg, sizeof(startMsg),
-        "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,\"spf\":%u,\"fmt\":\"bin1\"}",
-        totalSamples, totalFrames, SAMPLES_PER_FRAME);
-      bleSendJson(startMsg);
-      delay(30);  // let iOS process `start` before the binary stream begins
+        while (sentThisBatch < FRAMES_PER_BATCH &&
+               dumpNextFrame < dumpTotalFrames) {
+          const uint16_t frame = dumpNextFrame;
+          const uint16_t frameStart = frame * SAMPLES_PER_FRAME;
+          const uint16_t samplesInFrame =
+            (uint16_t)((totalSamples - frameStart) < SAMPLES_PER_FRAME
+                       ? (totalSamples - frameStart) : SAMPLES_PER_FRAME);
 
-      uint8_t buf[6 + SAMPLES_PER_FRAME * 20];
-      for (uint16_t frame = 0; frame < totalFrames; frame++) {
-        const uint16_t frameStart = frame * SAMPLES_PER_FRAME;
-        const uint16_t samplesInFrame =
-          (uint16_t)((totalSamples - frameStart) < SAMPLES_PER_FRAME
-                     ? (totalSamples - frameStart) : SAMPLES_PER_FRAME);
+          buf[0] = 0xFF;
+          buf[1] = 0x01;
+          buf[2] = (uint8_t)(frame & 0xFF);
+          buf[3] = (uint8_t)((frame >> 8) & 0xFF);
+          buf[4] = (uint8_t)samplesInFrame;
+          buf[5] = 0;
 
-        buf[0] = 0xFF;
-        buf[1] = 0x01;
-        buf[2] = (uint8_t)(frame & 0xFF);
-        buf[3] = (uint8_t)((frame >> 8) & 0xFF);
-        buf[4] = (uint8_t)samplesInFrame;
-        buf[5] = 0;
+          size_t off = 6;
+          auto writeI16LE = [&](int16_t v) {
+            buf[off++] = (uint8_t)(v & 0xFF);
+            buf[off++] = (uint8_t)((v >> 8) & 0xFF);
+          };
 
-        size_t off = 6;
-        auto writeI16LE = [&](int16_t v) {
-          buf[off++] = (uint8_t)(v & 0xFF);
-          buf[off++] = (uint8_t)((v >> 8) & 0xFF);
-        };
+          for (uint16_t k = 0; k < samplesInFrame; k++) {
+            const uint16_t sampleIdx = frameStart + k;
+            const uint16_t ringIdx   = (dumpRingStart + sampleIdx) % totalSamples;
+            const RawSample& s = ring[ringIdx];
+            const int16_t sampleI = (int16_t)((int)sampleIdx - (int)EXT_PRE_TRIGGER);
+            writeI16LE(sampleI);
+            writeI16LE(s.ax); writeI16LE(s.ay); writeI16LE(s.az);
+            writeI16LE(s.gx); writeI16LE(s.gy); writeI16LE(s.gz);
+            writeI16LE(s.hx); writeI16LE(s.hy); writeI16LE(s.hz);
+          }
 
-        for (uint16_t k = 0; k < samplesInFrame; k++) {
-          const uint16_t sampleIdx = frameStart + k;
-          const uint16_t ringIdx = (ringStart + sampleIdx) % totalSamples;
-          const RawSample& s = ring[ringIdx];
-          const int16_t sampleI = (int16_t)((int)sampleIdx - (int)EXT_PRE_TRIGGER);
-          writeI16LE(sampleI);
-          writeI16LE(s.ax); writeI16LE(s.ay); writeI16LE(s.az);
-          writeI16LE(s.gx); writeI16LE(s.gy); writeI16LE(s.gz);
-          writeI16LE(s.hx); writeI16LE(s.hy); writeI16LE(s.hz);
+          bleSendBinary(buf, off);
+          // Small gap so frames leave the queue before we pile up the next.
+          // 15 ms × 8 frames = 120ms per batch — plenty of headroom even if
+          // the NimBLE TX queue is only a few deep.
+          delay(15);
+          sentThisBatch++;
+          dumpNextFrame++;
         }
 
-        bleSendBinary(buf, off);
-        // Pacing: one frame per ~25ms comfortably below iOS's 15-30ms
-        // connection interval so the NimBLE TX queue never backs up.
-        // 240 frames × 25ms ≈ 6s total — acceptable.
-        delay(25);
+        // A brief trailing pause so the last binary frame in the batch is
+        // fully transmitted before we publish the batch marker.
+        delay(20);
+
+        if (dumpNextFrame >= dumpTotalFrames) {
+          bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
+          dumpActive = false;
+          debugMsg("dump_raw: complete");
+        } else {
+          char batchMsg[80];
+          snprintf(batchMsg, sizeof(batchMsg),
+            "{\"type\":\"dump\",\"status\":\"batch\",\"next\":%u}",
+            dumpNextFrame);
+          bleSendJson(batchMsg);
+        }
       }
-      // Small trailing buffer before the `done` marker so the last binary
-      // frame has time to actually leave the TX queue.
-      delay(50);
-      bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
-      debugMsg("dump_raw: complete");
     }
 
   } else if (strcmp(cmd, "imudiag") == 0) {
