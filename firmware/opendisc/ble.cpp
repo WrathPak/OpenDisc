@@ -10,7 +10,11 @@
 // onto the one task that's now blocked, so almost nothing ships. Everything
 // below is driven from bleTick() on the Arduino loop task instead.
 static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 8;
-static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 8;
+// Batch size 1 for diagnostics: each dump_next pulls exactly one indicate.
+// With batch=1 we can tell from serial exactly how many pulls iOS made and
+// how many indicates the firmware actually attempted. Raise after we
+// understand what's happening.
+static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 1;
 static constexpr uint16_t DUMP_PRE_TRIGGER = 960;
 static constexpr uint16_t DUMP_RING_SIZE   = 1920;
 
@@ -149,7 +153,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.6");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.7");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -176,12 +180,15 @@ void bleSendJson(const char* json) {
 }
 
 // Binary TX via ATT-level INDICATE on the dedicated dump characteristic.
-// indicate(data, len) blocks the calling task until the client ACKs (or
-// the NimBLE internal timeout fires), so the TX queue cannot back up no
-// matter how tight the loop is.
+// indicate(data, len) should block until the client ACKs, but diagnostic
+// log output here + the return value tell us whether NimBLE-Arduino 2.5
+// actually waits or fire-and-forgets.
 void bleSendBinary(const uint8_t* data, size_t len) {
   if (!deviceConnected || !pDumpChar) return;
-  pDumpChar->indicate(data, len);
+  unsigned long t0 = millis();
+  bool ok = pDumpChar->indicate(data, len);
+  unsigned long dt = millis() - t0;
+  Serial.printf("[IND] len=%u ok=%d dt=%lums\n", (unsigned)len, (int)ok, dt);
 }
 
 bool bleClientConnected() {
@@ -520,9 +527,11 @@ void bleHandleCommand(const char* json) {
     // notify() from here would queue TX onto this same task before we
     // return. Just flag it and bleTick() on the Arduino loop task picks
     // it up.
+    Serial.println("[BLE RX] dump_raw");
     dumpStartRequested = true;
 
   } else if (strcmp(cmd, "dump_next") == 0) {
+    Serial.println("[BLE RX] dump_next");
     dumpNextRequested = true;
 
   } else if (strcmp(cmd, "imudiag") == 0) {
