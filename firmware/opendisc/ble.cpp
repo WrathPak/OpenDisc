@@ -153,7 +153,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.7");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.8");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -183,12 +183,23 @@ void bleSendJson(const char* json) {
 // indicate(data, len) should block until the client ACKs, but diagnostic
 // log output here + the return value tell us whether NimBLE-Arduino 2.5
 // actually waits or fire-and-forgets.
+// Send a binary dump frame. We now route through the TX notify characteristic
+// (same channel as JSON status) rather than a dedicated indicate characteristic —
+// iOS's CoreBluetooth caches the GATT service table per-peripheral and a
+// freshly-added characteristic may not be visible to an iOS app that connected
+// to this device at any point prior. JSON status messages prove the TX channel
+// is subscribed and delivering; the 0xFF magic byte at offset 0 of every binary
+// frame is the discriminator the iOS client already handles.
 void bleSendBinary(const uint8_t* data, size_t len) {
-  if (!deviceConnected || !pDumpChar) return;
+  if (!deviceConnected || !pTxChar) return;
+  uint16_t txSubs = pTxChar->getSubscribedCount();
+  uint16_t dumpSubs = pDumpChar ? pDumpChar->getSubscribedCount() : 0;
   unsigned long t0 = millis();
-  bool ok = pDumpChar->indicate(data, len);
+  bool ok = pTxChar->notify(data, len);
   unsigned long dt = millis() - t0;
-  Serial.printf("[IND] len=%u ok=%d dt=%lums\n", (unsigned)len, (int)ok, dt);
+  Serial.printf("[BIN] len=%u txSubs=%u dumpSubs=%u ok=%d dt=%lums\n",
+                (unsigned)len, (unsigned)txSubs, (unsigned)dumpSubs,
+                (int)ok, dt);
 }
 
 bool bleClientConnected() {
