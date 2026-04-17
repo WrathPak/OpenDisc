@@ -340,10 +340,19 @@ final class BLEManager: NSObject {
                 // *something* from firmware.
                 dumpWatchdogRetries = 0
                 switch response.status {
-                case "start", "batch":
-                    // Pull-based protocol: ask for the next batch. Firmware
-                    // will reply with N binary frames + either another
-                    // "batch" status or "done" when finished.
+                case "start":
+                    // New firmware (1.0.9+) uses pure push — firmware will
+                    // now fire all binary frames with pacing and then send
+                    // `done`. We just arm the watchdog and wait. If the
+                    // response advertises mode == "pull" (old firmware) we
+                    // fall back to the pull behavior.
+                    if response.mode == "pull" {
+                        dumpNext()
+                    } else {
+                        armDumpWatchdog()
+                    }
+                case "batch":
+                    // Only seen on old pull-based firmware.
                     dumpNext()
                 case "done", "no_throw":
                     isDumping = false
