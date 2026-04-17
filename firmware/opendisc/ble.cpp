@@ -159,7 +159,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.3");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.4");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -296,7 +296,7 @@ static void handleDumpStart() {
 
   uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
   uint16_t nextFrame = 0;
-  constexpr uint8_t MAX_BATCH_RETRIES = 4;
+  constexpr uint8_t MAX_BATCH_RETRIES = 10;
   while (nextFrame < totalFrames && deviceConnected) {
     const uint16_t batchEnd =
       (nextFrame + DUMP_FRAMES_PER_BATCH < totalFrames)
@@ -304,10 +304,10 @@ static void handleDumpStart() {
         : totalFrames;
 
     // Retry the whole batch up to MAX_BATCH_RETRIES times on ACK timeout.
-    // CoreBluetooth sporadically drops notifications; iOS's dedup means
-    // replaying already-received frames is free (they're ignored). Only a
-    // frame iOS never received drives the ACK forward, so retries
-    // eventually get every frame through.
+    // iOS's ACK can be delayed by up to a few seconds if the main queue
+    // gets busy — we'd rather wait than give up and truncate the dump.
+    // A healthy batch still round-trips in ~50 ms, so the high ceiling
+    // only matters on the rare slow batch.
     bool batchAcked = false;
     for (uint8_t attempt = 0; attempt < MAX_BATCH_RETRIES && !batchAcked && deviceConnected; attempt++) {
       for (uint16_t f = nextFrame; f < batchEnd; f++) {
@@ -316,10 +316,11 @@ static void handleDumpStart() {
         delay(15);  // intra-batch pacing so rapid notifies can drain
       }
 
-      // Wait for iOS to ACK. 1.5s per attempt is plenty — a healthy batch
-      // is ACK'd within ~50ms.
+      // Wait up to 3 s per attempt. Total worst case per batch is 30 s —
+      // only hit if iOS completely stalls, in which case we do want to
+      // wait rather than silently truncate the user's throw data.
       dumpAckReceived = false;
-      const uint16_t waitMs = 1500;
+      const uint16_t waitMs = 3000;
       uint16_t waited = 0;
       while (!dumpAckReceived && waited < waitMs && deviceConnected) {
         delay(5);
