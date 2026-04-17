@@ -273,16 +273,18 @@ struct ThrowDetailView: View {
             return
         }
         let releaseIdx = throwData.releaseIdx < samples.count ? throwData.releaseIdx : nil
-        guard let result = TrajectoryEngine.compute(
-            samples: samples,
-            releaseIndex: releaseIdx,
-            calRx: throwData.calRx,
-            calRy: throwData.calRy
-        ) else {
-            trajectoryError = "Couldn't reconstruct trajectory — burst too short or no stationary reference."
-            return
+        do {
+            trajectory = try TrajectoryEngine.compute(
+                samples: samples,
+                releaseIndex: releaseIdx,
+                calRx: throwData.calRx,
+                calRy: throwData.calRy
+            )
+            showingTrajectory = true
+        } catch let error as TrajectoryError {
+            trajectoryError = error.description
+        } catch {
+            trajectoryError = "Trajectory reconstruction failed: \(error)"
         }
-        trajectory = result
-        showingTrajectory = true
     }
 }
