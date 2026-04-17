@@ -9,12 +9,13 @@
 // the radio. Calling notify() + delay() from inside onWrite queues TX data
 // onto the one task that's now blocked, so almost nothing ships. Everything
 // below is driven from bleTick() on the Arduino loop task instead.
-static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 8;
-// Packet Receipt Notification (Nordic-DFU style) batch size. Firmware
-// sends this many binary frames, then blocks waiting for iOS to write
-// `dump_ack{"last":N}` on the RX characteristic. This is the real fix
-// for ESP32 NimBLE's silent TX-queue drops — see NimBLE-Arduino#728.
-// 4 is small enough to stay far under any reasonable mbuf ceiling.
+// DIAGNOSTIC: 1 sample per frame. Resulting notification is 26 bytes
+// (6 byte header + 20 byte sample), small enough to fit inside the
+// minimum BLE link-layer PDU (27 bytes) regardless of whether Data
+// Length Extension negotiated successfully. If the 166-byte frames in
+// 1.1.1 failed because iOS is dropping fragmented LL packets, this
+// will succeed. 1920 total frames instead of 240 — slower but telling.
+static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 1;
 static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 4;
 static constexpr uint16_t DUMP_PRE_TRIGGER = 960;
 static constexpr uint16_t DUMP_RING_SIZE   = 1920;
@@ -160,7 +161,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.1");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.2");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
