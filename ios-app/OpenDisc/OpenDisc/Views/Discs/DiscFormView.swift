@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct DiscFormView: View {
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +12,7 @@ struct DiscFormView: View {
     @State private var color: String = ""
     @State private var notes: String = ""
     @State private var radiusMM: Double = 105
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -63,6 +65,11 @@ struct DiscFormView: View {
                     radiusMM = Double(disc.radius * 1000)
                 }
             }
+            .alert("Save failed", isPresented: .constant(saveError != nil), actions: {
+                Button("OK") { saveError = nil }
+            }, message: {
+                Text(saveError ?? "")
+            })
         }
     }
 
@@ -79,7 +86,12 @@ struct DiscFormView: View {
             let newDisc = Disc(brand: brand, model: model, color: color, notes: notes, radius: radiusM)
             modelContext.insert(newDisc)
         }
-        try? modelContext.save()
-        dismiss()
+        do {
+            try modelContext.save()
+            dismiss()
+        } catch {
+            saveError = "\(error)"
+            print("[DiscFormView] save failed: \(error)")
+        }
     }
 }

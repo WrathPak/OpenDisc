@@ -3,6 +3,7 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(BLEManager.self) private var bleManager
+    @Environment(StorageStatus.self) private var storageStatus
     @Environment(\.modelContext) private var modelContext
     @State private var voiceSettings = VoiceSettings.load()
     @State private var selectedDisc: Disc?
@@ -12,12 +13,17 @@ struct ContentView: View {
     /// The most recently saved throw, pending its raw-dump payload.
     @State private var pendingThrow: ThrowData?
 
+    /// Most recent throw-save error, cleared on the next successful save.
+    @State private var lastSaveError: String?
+
     var body: some View {
         TabView {
             DashboardView(
                 selectedDisc: $selectedDisc,
                 throwType: $throwType,
-                throwHand: $throwHand
+                throwHand: $throwHand,
+                storageWarning: storageWarning,
+                saveError: lastSaveError
             )
             .tabItem {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
@@ -60,6 +66,13 @@ struct ContentView: View {
         }
     }
 
+    private var storageWarning: String? {
+        if storageStatus.inMemoryFallback {
+            return "Storage error — running in-memory. Writes won't persist. " + (storageStatus.lastError ?? "")
+        }
+        return nil
+    }
+
     private var showScan: Binding<Bool> {
         Binding(
             get: { bleManager.connectedPeripheral == nil && bleManager.connectionState != .reconnecting },
@@ -89,7 +102,14 @@ struct ContentView: View {
         throwData.calRy = status?.calRY ?? 0
         throwData.launchAngle = response.launch ?? 0
         modelContext.insert(throwData)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            lastSaveError = nil
+            print("[saveThrow] inserted + saved mph=\(response.mph) valid=\(response.valid)")
+        } catch {
+            lastSaveError = "\(error)"
+            print("[saveThrow] SAVE FAILED: \(error)")
+        }
 
         // PR check against all persisted throws.
         let allThrows = (try? modelContext.fetch(FetchDescriptor<ThrowData>())) ?? []
