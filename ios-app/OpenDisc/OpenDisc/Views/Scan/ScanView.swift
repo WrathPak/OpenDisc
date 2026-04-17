@@ -2,7 +2,11 @@ import SwiftUI
 
 struct ScanView: View {
     @Environment(BLEManager.self) private var bleManager
+    @Environment(\.dismiss) private var dismiss
     @State private var showError = false
+    /// Optional callback fired as soon as the peripheral finishes connecting,
+    /// so a parent sheet can auto-dismiss.
+    var onConnected: (() -> Void)? = nil
 
     var body: some View {
         NavigationStack {
@@ -11,11 +15,13 @@ struct ScanView: View {
 
                 scanAnimation
 
-                Text("Searching for OpenDisc...")
+                Text(bleManager.connectedPeripheral == nil
+                     ? "Searching for OpenDisc..."
+                     : "Connected")
                     .font(.headline)
                     .foregroundStyle(.secondary)
 
-                if bleManager.discoveredPeripherals.isEmpty {
+                if bleManager.discoveredPeripherals.isEmpty && bleManager.connectedPeripheral == nil {
                     Text("Make sure your OpenDisc is powered on")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
@@ -26,11 +32,22 @@ struct ScanView: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("OpenDisc")
+            .navigationTitle("Connect")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .onAppear { bleManager.startScanning() }
             .onDisappear { bleManager.stopScanning() }
             .onChange(of: bleManager.error != nil) { _, hasError in
                 showError = hasError
+            }
+            .onChange(of: bleManager.connectionState) { _, newState in
+                if newState == .connected {
+                    onConnected?()
+                }
             }
             .alert("Bluetooth Error", isPresented: $showError) {
                 Button("OK") { bleManager.error = nil }

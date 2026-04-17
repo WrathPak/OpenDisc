@@ -13,6 +13,9 @@ struct DashboardView: View {
     var dumpProgress: Float? = nil
     var dumpSampleCount: Int = 0
     var dumpExpectedCount: Int? = nil
+    /// Invoked when the user taps the connection status bar while not
+    /// connected. ContentView uses this to open the connect sheet.
+    var onTapConnect: (() -> Void)? = nil
 
     private var recentMPHSeries: [(Int, Float)] {
         throwsDesc.prefix(30)
@@ -26,10 +29,19 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    ConnectionStatusBar(
-                        connectionState: bleManager.connectionState,
-                        deviceState: bleManager.deviceState
-                    )
+                    Button {
+                        if bleManager.connectedPeripheral == nil,
+                           let onTapConnect {
+                            onTapConnect()
+                        }
+                    } label: {
+                        ConnectionStatusBar(
+                            connectionState: bleManager.connectionState,
+                            deviceState: bleManager.deviceState
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(bleManager.connectedPeripheral != nil)
 
                     if let storageWarning {
                         errorBanner(title: "Storage",

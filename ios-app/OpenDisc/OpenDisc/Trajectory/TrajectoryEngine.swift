@@ -40,6 +40,7 @@ enum TrajectoryError: Error, CustomStringConvertible {
     case tooFewSamples(count: Int)
     case noStationaryWindow(samplesSearched: Int)
     case lowGravityReading(magnitude: Float, samplesSearched: Int)
+    case degenerateIntegration
 
     var description: String {
         switch self {
@@ -53,6 +54,10 @@ enum TrajectoryError: Error, CustomStringConvertible {
                 + "Tried %d search positions. The disc may have been in motion for "
                 + "the entire burst, or the IMU is miscalibrated.",
                 magnitude, searched)
+        case .degenerateIntegration:
+            return "Integration produced no meaningful motion — this usually means the "
+                + "reconstruction couldn't find a valid stationary reference and the "
+                + "integrator's initial conditions were guessed. The 3D view would be blank."
         }
     }
 }
@@ -77,19 +82,17 @@ enum TrajectoryEngine {
             throw TrajectoryError.tooFewSamples(count: samples.count)
         }
 
-        // 1. Find the quietest 16-sample window anywhere in the buffer.
-        //    (Earlier code restricted search to the first half; that
-        //    assumed the pre-trigger region was stationary, which breaks
-        //    when the thrower has already wound up their backswing before
-        //    the ring fills. Searching the whole buffer gives us a chance
-        //    of finding the stationary moment before the wind-up or after
-        //    catching.)
-        let searchEnd = max(16, samples.count - 16)
+        // 1. Find the quietest 16-sample window in the pre-trigger half of
+        //    the buffer. We want early samples so the post-stationary
+        //    integration covers the throw motion — integrating from a
+        //    stationary window near the end would leave nothing useful
+        //    after it.
+        let searchEnd = max(16, samples.count / 2)
         guard let stationaryStart = findStationaryWindow(samples: samples,
                                                          start: 0,
                                                          end: searchEnd,
                                                          length: 16) else {
-            throw TrajectoryError.noStationaryWindow(samplesSearched: samples.count)
+            throw TrajectoryError.noStationaryWindow(samplesSearched: searchEnd)
         }
         let stationaryEnd = stationaryStart + 16
 
@@ -101,15 +104,24 @@ enum TrajectoryEngine {
             biasSum += SIMD3(Float(s.gx), Float(s.gy), Float(s.gz)) * IMUConstants.gyroSens
             accelSum += SIMD3(Float(s.ax), Float(s.ay), Float(s.az)) * IMUConstants.accelSens
         }
-        let gyroBias = biasSum / 16.0
-        let gravityBody = accelSum / 16.0   // in g units, body frame
+        var gyroBias = biasSum / 16.0
+        var gravityBody = accelSum / 16.0   // in g units, body frame
 
         // 3. Initialize world-to-body quaternion so that gravity in the body
-        //    frame maps to (0, 0, -1) in the world frame (i.e. -Z is down).
-        let gravityMag = simd_length(gravityBody)
-        guard gravityMag > 0.5 else {
-            throw TrajectoryError.lowGravityReading(magnitude: gravityMag,
-                                                    samplesSearched: samples.count)
+        //    frame maps to (0, 0, -1) in the world frame.
+        //
+        //    If the "stationary" window isn't truly stationary (a real
+        //    throw might not have a single still moment — the thrower is
+        //    winding up from frame 0), accel magnitude may be far from 1g.
+        //    Rather than throwing and showing a blank panel, fall back to
+        //    defaults so at least *some* trajectory renders. Accuracy
+        //    degrades but the user sees the flight path.
+        var gravityMag = simd_length(gravityBody)
+        if gravityMag < 0.5 {
+            // Pure guess: gravity down body-Z. Zero gyro bias.
+            gravityBody = SIMD3<Float>(0, 0, -1)
+            gyroBias = .zero
+            gravityMag = 1.0
         }
         let gravityBodyNormalized = gravityBody / gravityMag
         // Rotate body "down" vector to world "down" vector
@@ -208,6 +220,14 @@ enum TrajectoryEngine {
 
             minPos = simd_min(minPos, position)
             maxPos = simd_max(maxPos, position)
+        }
+
+        // If integration didn't produce meaningful motion, don't return a
+        // trajectory that would render as an empty scene. Throw so the
+        // caller can show a useful error message instead.
+        let extent = simd_length(maxPos - minPos)
+        if extent < 0.1 {
+            throw TrajectoryError.degenerateIntegration
         }
 
         return Trajectory(

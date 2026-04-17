@@ -16,6 +16,9 @@ struct ContentView: View {
     /// Most recent throw-save error, cleared on the next successful save.
     @State private var lastSaveError: String?
 
+    /// Set when the user taps the status bar to open the connect sheet.
+    @State private var showingConnectSheet = false
+
     var body: some View {
         TabView {
             DashboardView(
@@ -26,7 +29,8 @@ struct ContentView: View {
                 saveError: lastSaveError,
                 dumpProgress: bleManager.isDumping ? bleManager.dumpProgress : nil,
                 dumpSampleCount: bleManager.dumpSamples.count,
-                dumpExpectedCount: bleManager.dumpExpectedCount
+                dumpExpectedCount: bleManager.dumpExpectedCount,
+                onTapConnect: { showingConnectSheet = true }
             )
             .tabItem {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
@@ -52,8 +56,16 @@ struct ContentView: View {
                     Label("Settings", systemImage: "gearshape")
                 }
         }
-        .fullScreenCover(isPresented: showScan) {
-            ScanView()
+        .sheet(isPresented: $showingConnectSheet) {
+            ScanView(onConnected: { showingConnectSheet = false })
+        }
+        .onAppear {
+            // Kick off a background scan on launch so a nearby OpenDisc
+            // auto-connects without forcing the user to open the sheet.
+            if bleManager.connectedPeripheral == nil
+                && bleManager.connectionState != .reconnecting {
+                bleManager.startScanning()
+            }
         }
         .onChange(of: bleManager.throwCount) { _, _ in
             saveThrow()
@@ -85,12 +97,6 @@ struct ContentView: View {
         return nil
     }
 
-    private var showScan: Binding<Bool> {
-        Binding(
-            get: { bleManager.connectedPeripheral == nil && bleManager.connectionState != .reconnecting },
-            set: { _ in }
-        )
-    }
 
     private func saveThrow() {
         guard let response = bleManager.lastThrow else { return }
