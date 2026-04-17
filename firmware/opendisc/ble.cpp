@@ -9,13 +9,11 @@
 // the radio. Calling notify() + delay() from inside onWrite queues TX data
 // onto the one task that's now blocked, so almost nothing ships. Everything
 // below is driven from bleTick() on the Arduino loop task instead.
-// DIAGNOSTIC: 1 sample per frame. Resulting notification is 26 bytes
-// (6 byte header + 20 byte sample), small enough to fit inside the
-// minimum BLE link-layer PDU (27 bytes) regardless of whether Data
-// Length Extension negotiated successfully. If the 166-byte frames in
-// 1.1.1 failed because iOS is dropping fragmented LL packets, this
-// will succeed. 1920 total frames instead of 240 — slower but telling.
-static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 1;
+// 8 samples per frame (166-byte notification) + PRN batch of 4. Mac-side
+// BLE testing confirmed firmware transmits full-size frames reliably —
+// the size isn't the issue. The iOS app's @Observable/SwiftUI churn was
+// the actual cause of dropped notifications; fixed on the client side.
+static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 8;
 static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 4;
 static constexpr uint16_t DUMP_PRE_TRIGGER = 960;
 static constexpr uint16_t DUMP_RING_SIZE   = 1920;
@@ -161,7 +159,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.2");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.3");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
