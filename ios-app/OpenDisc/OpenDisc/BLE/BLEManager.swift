@@ -556,6 +556,11 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
             case BLEConstants.txCharUUID:
                 txCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
+            case BLEConstants.dumpCharUUID:
+                // INDICATE-only characteristic for raw-dump binary frames.
+                // setNotifyValue picks INDICATE when that's the only
+                // property advertised by the characteristic.
+                peripheral.setNotifyValue(true, for: characteristic)
             case BLEConstants.firmwareRevUUID:
                 peripheral.readValue(for: characteristic)
             default:
@@ -581,6 +586,17 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
 
         if characteristic.uuid == BLEConstants.txCharUUID {
             handleResponse(data: data)
+            return
+        }
+
+        if characteristic.uuid == BLEConstants.dumpCharUUID {
+            // Binary dump frame via ATT-level INDICATE — guaranteed-delivery
+            // flow control. The 0xFF magic check isn't strictly necessary
+            // here since only binary frames come through this characteristic,
+            // but handleDumpBinaryFrame() already validates the header so we
+            // just forward.
+            handleDumpBinaryFrame(data: data)
+            return
         }
     }
 

@@ -28,6 +28,10 @@ static uint16_t dumpRingStart   = 0;
 #define NUS_SERVICE_UUID        "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define NUS_RX_UUID             "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define NUS_TX_UUID             "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+// Dump characteristic — INDICATE only. Every binary dump frame gets an
+// ATT-layer ACK before the next is sent, so the TX queue can't back up.
+// iOS subscribes to this separately from the NOTIFY TX channel.
+#define NUS_DUMP_UUID           "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
 
 // External state from disc_golf_imu.ino
 extern const char* stateNames[];
@@ -71,6 +75,7 @@ void debugMsg(const char* fmt, ...) {
 static NimBLEServer* pServer = nullptr;
 static NimBLECharacteristic* pTxChar = nullptr;
 static NimBLECharacteristic* pRxChar = nullptr;
+static NimBLECharacteristic* pDumpChar = nullptr;
 static bool deviceConnected = false;
 static bool liveStreaming = false;
 static unsigned long lastStreamMs = 0;
@@ -131,12 +136,20 @@ void initBLE() {
   );
   pRxChar->setCallbacks(new RxCallbacks());
 
+  // INDICATE-only binary dump channel. Each call to pDumpChar->indicate()
+  // blocks in NimBLE until the ATT-level confirmation comes back from the
+  // client — guaranteed in-order delivery, no TX-queue overflow possible.
+  pDumpChar = pNus->createCharacteristic(
+    NUS_DUMP_UUID,
+    NIMBLE_PROPERTY::INDICATE
+  );
+
   pNus->start();
 
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.5");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.6");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -162,11 +175,13 @@ void bleSendJson(const char* json) {
   debugMsg("BLE TX %d bytes", len);
 }
 
-// Binary TX on the same characteristic. Client distinguishes binary vs JSON
-// by the leading byte (0xFF = binary, 0x7B = JSON '{').
+// Binary TX via ATT-level INDICATE on the dedicated dump characteristic.
+// indicate(data, len) blocks the calling task until the client ACKs (or
+// the NimBLE internal timeout fires), so the TX queue cannot back up no
+// matter how tight the loop is.
 void bleSendBinary(const uint8_t* data, size_t len) {
-  if (!deviceConnected || !pTxChar) return;
-  pTxChar->notify(data, len);
+  if (!deviceConnected || !pDumpChar) return;
+  pDumpChar->indicate(data, len);
 }
 
 bool bleClientConnected() {
@@ -257,17 +272,13 @@ static void handleDumpNext() {
   uint16_t sent = 0;
   while (sent < DUMP_FRAMES_PER_BATCH && dumpNextFrame < dumpTotalFrames) {
     size_t len = buildDumpFrame(dumpNextFrame, buf);
+    // indicate() blocks until the client ACKs at the ATT layer — natural
+    // flow control. No artificial pacing needed; we can only loop as fast
+    // as iOS can consume.
     bleSendBinary(buf, len);
-    // iOS's typical BLE connection interval is 30ms and it drains ~1
-    // notification per interval; anything faster than ~35ms piles up in
-    // the NimBLE TX queue and gets dropped.
-    delay(35);
     sent++;
     dumpNextFrame++;
   }
-  // Let the last binary frame fully drain before the status JSON so they
-  // don't share a connection event and clobber each other.
-  delay(40);
   if (dumpNextFrame >= dumpTotalFrames) {
     bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
     dumpActive = false;
