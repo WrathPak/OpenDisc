@@ -192,14 +192,10 @@ void bleSendJson(const char* json) {
 // frame is the discriminator the iOS client already handles.
 void bleSendBinary(const uint8_t* data, size_t len) {
   if (!deviceConnected || !pTxChar) return;
-  uint16_t txSubs = pTxChar->getSubscribedCount();
-  uint16_t dumpSubs = pDumpChar ? pDumpChar->getSubscribedCount() : 0;
   unsigned long t0 = millis();
   bool ok = pTxChar->notify(data, len);
   unsigned long dt = millis() - t0;
-  Serial.printf("[BIN] len=%u txSubs=%u dumpSubs=%u ok=%d dt=%lums\n",
-                (unsigned)len, (unsigned)txSubs, (unsigned)dumpSubs,
-                (int)ok, dt);
+  Serial.printf("[BIN] len=%u ok=%d dt=%lums\n", (unsigned)len, (int)ok, dt);
 }
 
 bool bleClientConnected() {
