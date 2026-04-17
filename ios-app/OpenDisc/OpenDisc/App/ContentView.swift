@@ -166,7 +166,11 @@ struct ContentView: View {
             let expected = bleManager.dumpExpectedCount ?? 0
             if expected > 0 && sorted.count < expected {
                 let pct = Int(Float(sorted.count) / Float(expected) * 100)
-                lastSaveError = "Trajectory partial: \(sorted.count)/\(expected) samples (\(pct)%). 3D view may be choppy — some BLE frames were dropped."
+                let calls = bleManager.dumpFrameCallCount
+                let dedup = bleManager.dumpFrameDedupCount
+                let hdrReject = bleManager.dumpFrameHeaderRejectCount
+                let unique = bleManager.dumpReceivedFrames.count
+                lastSaveError = "Trajectory partial: \(sorted.count)/\(expected) samples (\(pct)%). callbacks=\(calls) headerReject=\(hdrReject) dup=\(dedup) uniqueSeqs=\(unique). Some BLE frames were dropped."
             } else {
                 lastSaveError = nil
             }
