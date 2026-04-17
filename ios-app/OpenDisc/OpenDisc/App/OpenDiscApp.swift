@@ -10,6 +10,10 @@ private let appLog = Logger(subsystem: "com.opendisc.app", category: "storage")
 final class StorageStatus {
     var inMemoryFallback: Bool = false
     var lastError: String? = nil
+
+    /// Absolute path to the on-disk store — surfaced so Settings can offer a
+    /// "Reset local data" action that wipes it.
+    var storeURL: URL? = nil
 }
 
 @main
@@ -19,15 +23,21 @@ struct OpenDiscApp: App {
     private let container: ModelContainer
 
     init() {
-        let schema = Schema([ThrowData.self, Disc.self])
+        let schema = Schema(versionedSchema: SchemaV2.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         let status = StorageStatus()
+        status.storeURL = config.url
+
         do {
-            container = try ModelContainer(for: schema, configurations: [config])
-            appLog.info("ModelContainer opened OK at \(config.url.path, privacy: .public)")
+            container = try ModelContainer(
+                for: schema,
+                migrationPlan: OpenDiscMigrationPlan.self,
+                configurations: [config]
+            )
+            appLog.info("ModelContainer opened at \(config.url.path, privacy: .public)")
         } catch {
             let msg = "\(error)"
-            appLog.error("ModelContainer init FAILED: \(msg, privacy: .public). Falling back to in-memory store.")
+            appLog.error("ModelContainer init FAILED: \(msg, privacy: .public). Running in-memory — writes won't persist.")
             status.inMemoryFallback = true
             status.lastError = msg
             let memoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
