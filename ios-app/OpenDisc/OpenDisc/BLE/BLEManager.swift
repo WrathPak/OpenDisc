@@ -84,6 +84,11 @@ final class BLEManager: NSObject {
     var isDumping: Bool = false
     var dumpSamples: [DumpSampleResponse] = []
     var dumpComplete: Bool = false
+    /// Counts `d`-typed BLE responses that failed to decode. Exposed so the UI
+    /// can explain why dumpSamples is empty.
+    var dumpDecodeFailures: Int = 0
+    /// Snapshot of the last decode error for diagnostics.
+    var dumpDecodeLastError: String?
 
     // Error
     var error: BLEError?
@@ -160,7 +165,7 @@ final class BLEManager: NSObject {
     func stopCalibration()  { sendCommand(.calStop) }
     func getSettings()      { sendCommand(.settingsGet) }
     func requestIMUDiag()   { sendCommand(.imuDiag) }
-    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; isDumping = true; sendCommand(.dumpRaw) }
+    func dumpRaw()           { dumpSamples.removeAll(); dumpComplete = false; dumpDecodeFailures = 0; dumpDecodeLastError = nil; isDumping = true; sendCommand(.dumpRaw) }
     func setWifi(enabled: Bool) { sendCommand(enabled ? .wifiOn : .wifiOff) }
 
     func updateSettings(autoArm: Bool? = nil, triggerG: Float? = nil) {
@@ -249,15 +254,28 @@ final class BLEManager: NSObject {
 
         case .dump:
             if let response = try? decoder.decode(DumpStatusResponse.self, from: data) {
+                print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
                 if response.status == "done" || response.status == "no_throw" {
                     isDumping = false
                     dumpComplete = response.status == "done"
                 }
+            } else {
+                let snippet = String(data: data, encoding: .utf8) ?? "<binary>"
+                print("[BLE] dump status decode failed: \(snippet.prefix(120))")
             }
 
         case .d:
-            if let sample = try? decoder.decode(DumpSampleResponse.self, from: data) {
+            do {
+                let sample = try decoder.decode(DumpSampleResponse.self, from: data)
                 dumpSamples.append(sample)
+            } catch {
+                dumpDecodeFailures += 1
+                if dumpDecodeLastError == nil {
+                    // Capture first failure verbatim — this is what we need to see.
+                    let snippet = String(data: data, encoding: .utf8) ?? "<binary>"
+                    dumpDecodeLastError = "\(error) | payload: \(snippet.prefix(160))"
+                    print("[BLE] d-sample decode failed: \(error)\n  payload: \(snippet)")
+                }
             }
         }
     }
