@@ -136,7 +136,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.4");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.5");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -258,13 +258,16 @@ static void handleDumpNext() {
   while (sent < DUMP_FRAMES_PER_BATCH && dumpNextFrame < dumpTotalFrames) {
     size_t len = buildDumpFrame(dumpNextFrame, buf);
     bleSendBinary(buf, len);
-    // Small pacing between frames within a batch. BLE task is free to drain.
-    delay(10);
+    // iOS's typical BLE connection interval is 30ms and it drains ~1
+    // notification per interval; anything faster than ~35ms piles up in
+    // the NimBLE TX queue and gets dropped.
+    delay(35);
     sent++;
     dumpNextFrame++;
   }
-  // Brief pause so the last frame gets fully drained before the status JSON.
-  delay(15);
+  // Let the last binary frame fully drain before the status JSON so they
+  // don't share a connection event and clobber each other.
+  delay(40);
   if (dumpNextFrame >= dumpTotalFrames) {
     bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
     dumpActive = false;
@@ -300,8 +303,10 @@ void bleTick() {
     blePushState(stateNames[state]);
   }
 
-  // Live stream at 10 Hz
-  if (liveStreaming && (now - lastStreamMs >= 100)) {
+  // Live stream at 10 Hz — suppressed while a raw-dump is in progress so
+  // the 10Hz JSON chatter doesn't compete with dump frames on the same
+  // TX queue and push the queue into overflow.
+  if (liveStreaming && !dumpActive && (now - lastStreamMs >= 100)) {
     lastStreamMs = now;
     char buf[300];
     snprintf(buf, sizeof(buf),
