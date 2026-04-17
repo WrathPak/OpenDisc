@@ -116,6 +116,11 @@ float triggerG = 3.0f;
 ThrowMetrics lastMetrics = {};
 bool hasLastThrow = false;
 
+// Monotonic throw sequence counter, persisted to NVS. Incremented each time a
+// new throw is analyzed. Exposed in throw_ready / throw / status responses so
+// iOS can dedupe across BT drops and detect missed throws on reconnect.
+uint32_t throwSeq = 0;
+
 // Auto-arm debounce
 uint8_t autoArmRun = 0;
 
@@ -132,6 +137,7 @@ void loadSettings() {
   calRadius = prefs.getFloat("calRadius", 0.0f);
   calRx = prefs.getFloat("calRx", 0.0f);
   calRy = prefs.getFloat("calRy", 0.0f);
+  throwSeq = prefs.getUInt("throwSeq", 0);
   prefs.end();
   triggerRaw = (int32_t)(triggerG / ACCEL_SENS);
 }
@@ -303,9 +309,13 @@ void loop() {
     CalVector cv = {calRx, calRy, calRadius};
     lastMetrics = analyzeThrow(ring, RING_SIZE, triggerIndex, PRE_TRIGGER, cv);
     hasLastThrow = true;
+    throwSeq++;
+    prefs.begin("opendisc", false);
+    prefs.putUInt("throwSeq", throwSeq);
+    prefs.end();
     doneAtMs = millis();
-    Serial.printf("[THROW] rpm=%.0f mph=%.1f peakG=%.1f rel=%d\n",
-      lastMetrics.rpm, lastMetrics.mph,
+    Serial.printf("[THROW] seq=%u rpm=%.0f mph=%.1f peakG=%.1f rel=%d\n",
+      (unsigned)throwSeq, lastMetrics.rpm, lastMetrics.mph,
       lastMetrics.peak_accel_g, lastMetrics.release_index);
     if (bleClientConnected()) blePushThrowReady();
   }

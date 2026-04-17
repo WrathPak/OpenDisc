@@ -9,6 +9,8 @@ struct StatusResponse: Decodable {
     let cal_ry: Float
     let has_throw: Bool
     let fw_version: String
+    /// Firmware-supplied monotonic throw counter. nil on firmware older than 1.0.1.
+    let throw_seq: Int?
 }
 
 struct LiveResponse: Decodable {
@@ -39,6 +41,13 @@ struct ThrowResponse: Decodable {
     // Launch angle (vertical angle of the velocity vector at release).
     // Optional: older firmware doesn't emit this field.
     let launch: Float?
+    /// Firmware-supplied monotonic throw counter. nil on firmware older than 1.0.1.
+    let seq: Int?
+}
+
+struct ThrowReadyResponse: Decodable {
+    let type: String
+    let seq: Int?
 }
 
 struct StateEvent: Decodable {

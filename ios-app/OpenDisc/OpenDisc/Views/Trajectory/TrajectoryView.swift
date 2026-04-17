@@ -8,34 +8,86 @@ import simd
 /// disc's path through space with speed-gradient coloring, keyframe disc
 /// models showing orientation, and a release marker.
 struct TrajectoryView: View {
-    let trajectory: Trajectory
+    let trajectory: Trajectory?
+    let errorMessage: String?
+    let throwData: ThrowData
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            TrajectorySceneView(trajectory: trajectory)
-                .ignoresSafeArea(edges: .bottom)
-                .navigationTitle("3D Trajectory")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") { dismiss() }
-                    }
+            Group {
+                if let trajectory {
+                    TrajectorySceneView(trajectory: trajectory)
+                        .ignoresSafeArea(edges: .bottom)
+                        .overlay(alignment: .bottom) {
+                            legend.padding(.bottom, 24)
+                        }
+                        .overlay(alignment: .topLeading) {
+                            diagnostics(trajectory: trajectory)
+                                .padding(.leading, 12)
+                                .padding(.top, 8)
+                        }
+                } else {
+                    unavailablePanel
                 }
-                .overlay(alignment: .bottom) {
-                    legend
-                        .padding(.bottom, 24)
+            }
+            .navigationTitle("3D Trajectory")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
                 }
-                .overlay(alignment: .topLeading) {
-                    diagnostics
-                        .padding(.leading, 12)
-                        .padding(.top, 8)
-                }
+            }
         }
     }
 
-    private var diagnostics: some View {
+    private var unavailablePanel: some View {
+        let samples = throwData.decodedSamples?.count ?? 0
+        let rawBytes = throwData.rawSamples?.count ?? 0
+        let rows: [(String, String)] = [
+            ("Reason", errorMessage ?? "Unknown — trajectory not produced."),
+            ("Samples decoded", "\(samples)"),
+            ("Raw bytes", "\(rawBytes)"),
+            ("releaseIdx", "\(throwData.releaseIdx)"),
+            ("calRx, calRy", String(format: "%.4f, %.4f", throwData.calRx, throwData.calRy)),
+            ("mph (firmware)", String(format: "%.2f", throwData.mph)),
+            ("durationMS", "\(throwData.durationMS)"),
+            ("launchAngle", String(format: "%.2f°", throwData.launchAngle))
+        ]
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Trajectory unavailable")
+                        .font(.headline)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(rows, id: \.0) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.0)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(row.1)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+
+                Text("Tip: calRx/calRy of 0 means the gyro bias calibration never ran — integration will drift. mph near zero + durationMS near zero means the firmware didn't detect a real throw.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+        }
+    }
+
+    private func diagnostics(trajectory: Trajectory) -> some View {
         let points = trajectory.points
         let moving = points.filter { $0.speed > 0.05 }.count
         let extent = trajectory.bounds.max - trajectory.bounds.min

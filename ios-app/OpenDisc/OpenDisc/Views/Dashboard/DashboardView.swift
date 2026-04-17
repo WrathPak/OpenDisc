@@ -43,6 +43,20 @@ struct DashboardView: View {
                     .buttonStyle(.plain)
                     .disabled(bleManager.connectedPeripheral != nil)
 
+                    if bleManager.connectedPeripheral != nil,
+                       bleManager.deviceStatus?.hasThrow == true {
+                        Button {
+                            bleManager.fetchThrow()
+                        } label: {
+                            Label("Pull last throw", systemImage: "arrow.down.circle")
+                                .font(.caption)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
                     if let storageWarning {
                         errorBanner(title: "Storage",
                                     message: storageWarning,

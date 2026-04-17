@@ -8,6 +8,8 @@ struct DeviceStatus: Sendable {
     let calRY: Float
     let hasThrow: Bool
     let firmwareVersion: String
+    /// Firmware-reported monotonic throw counter. nil on firmware <1.0.1.
+    let throwSeq: Int?
 
     var isCalibrated: Bool { radius > 0 }
     var radiusMM: Float { radius * 1000 }
@@ -20,5 +22,6 @@ struct DeviceStatus: Sendable {
         self.calRY = response.cal_ry
         self.hasThrow = response.has_throw
         self.firmwareVersion = response.fw_version
+        self.throwSeq = response.throw_seq
     }
 }

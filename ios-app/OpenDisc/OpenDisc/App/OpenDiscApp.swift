@@ -23,7 +23,7 @@ struct OpenDiscApp: App {
     private let container: ModelContainer
 
     init() {
-        let schema = Schema(versionedSchema: SchemaV2.self)
+        let schema = Schema(versionedSchema: SchemaV3.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         let status = StorageStatus()
         status.storeURL = config.url

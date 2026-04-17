@@ -68,9 +68,21 @@ struct ContentView: View {
             }
         }
         .onChange(of: bleManager.throwCount) { _, _ in
-            saveThrow()
-            if let response = bleManager.lastThrow {
+            let isNew = saveThrow()
+            if isNew, let response = bleManager.lastThrow {
                 VoiceManager.announceThrow(response, settings: voiceSettings)
+            }
+        }
+        .onChange(of: bleManager.deviceStatus?.throwSeq) { _, newSeq in
+            // Auto-pull: firmware's seq is ahead of our local max, meaning a
+            // throw completed while we were out of BT range. Fetch it now.
+            // Firmware < 1.0.1 has nil throwSeq — we can't tell, so skip.
+            guard let newSeq, newSeq > 0 else { return }
+            let localMax = (try? modelContext.fetch(FetchDescriptor<ThrowData>()))?
+                .map(\.throwSeq).max() ?? -1
+            if newSeq > localMax {
+                print("[auto-pull] firmware seq=\(newSeq) > local max=\(localMax) — fetching last throw")
+                bleManager.fetchThrow()
             }
         }
         .onChange(of: bleManager.dumpComplete) { _, complete in
@@ -98,9 +110,31 @@ struct ContentView: View {
     }
 
 
-    private func saveThrow() {
-        guard let response = bleManager.lastThrow else { return }
+    /// Ingests `bleManager.lastThrow` into the SwiftData store.
+    /// Returns `true` if a new row was inserted, `false` if this was a duplicate
+    /// of an already-saved throw (matched by firmware-supplied seq).
+    @discardableResult
+    private func saveThrow() -> Bool {
+        guard let response = bleManager.lastThrow else { return false }
         let status = bleManager.deviceStatus
+
+        // Dedupe: if the firmware gave us a seq and we already have a throw
+        // with that seq, don't create a duplicate. Re-trigger dumpRaw anyway
+        // so a prior dump failure can still be recovered.
+        if let seq = response.seq, seq >= 0 {
+            let match = (try? modelContext.fetch(
+                FetchDescriptor<ThrowData>(
+                    predicate: #Predicate { $0.throwSeq == seq }
+                )
+            ))?.first
+            if let existing = match {
+                print("[saveThrow] dedupe hit on seq=\(seq) — skipping insert, refetching raw")
+                pendingThrow = existing
+                bleManager.dumpRaw()
+                return false
+            }
+        }
+
         let throwData = ThrowData(
             timestamp: Date(),
             mph: response.mph,
@@ -119,11 +153,12 @@ struct ContentView: View {
         throwData.calRx = status?.calRX ?? 0
         throwData.calRy = status?.calRY ?? 0
         throwData.launchAngle = response.launch ?? 0
+        throwData.throwSeq = response.seq ?? -1
         modelContext.insert(throwData)
         do {
             try modelContext.save()
             lastSaveError = nil
-            print("[saveThrow] inserted + saved mph=\(response.mph) valid=\(response.valid)")
+            print("[saveThrow] inserted seq=\(throwData.throwSeq) mph=\(response.mph) valid=\(response.valid)")
         } catch {
             lastSaveError = "\(error)"
             print("[saveThrow] SAVE FAILED: \(error)")
@@ -139,6 +174,7 @@ struct ContentView: View {
         // Kick off the raw dump so we can reconstruct the trajectory later.
         pendingThrow = throwData
         bleManager.dumpRaw()
+        return true
     }
 
     private func persistRawDump() {

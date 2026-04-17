@@ -181,9 +181,11 @@ struct ThrowDetailView: View {
             ThrowEditView(throwData: throwData)
         }
         .sheet(isPresented: $showingTrajectory) {
-            if let trajectory {
-                TrajectoryView(trajectory: trajectory)
-            }
+            TrajectoryView(
+                trajectory: trajectory,
+                errorMessage: trajectoryError,
+                throwData: throwData
+            )
         }
     }
 
@@ -279,8 +281,10 @@ struct ThrowDetailView: View {
 
     private func computeAndShowTrajectory() {
         trajectoryError = nil
+        trajectory = nil
         guard let samples = throwData.decodedSamples, !samples.isEmpty else {
             trajectoryError = "No raw sample data available for this throw."
+            showingTrajectory = true
             return
         }
         let releaseIdx = throwData.releaseIdx < samples.count ? throwData.releaseIdx : nil
@@ -291,12 +295,12 @@ struct ThrowDetailView: View {
                 calRx: throwData.calRx,
                 calRy: throwData.calRy
             )
-            showingTrajectory = true
         } catch let error as TrajectoryError {
             trajectoryError = error.description
         } catch {
             trajectoryError = "Trajectory reconstruction failed: \(error)"
         }
+        showingTrajectory = true
     }
 
     private func rawSamplesCSVURL() -> URL? {

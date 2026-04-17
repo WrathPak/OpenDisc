@@ -21,15 +21,13 @@ struct SettingsView: View {
             Form {
                 Section("Player Defaults") {
                     Picker("Default Hand", selection: $appSettings.defaultThrowHand) {
-                        ForEach(ThrowHand.allCases, id: \.self) { h in
-                            Text(h == .right ? "Right Hand" : "Left Hand").tag(h)
-                        }
+                        Text("Right Hand").tag(ThrowHand.right)
+                        Text("Left Hand").tag(ThrowHand.left)
                     }
 
                     Picker("Default Throw", selection: $appSettings.defaultThrowType) {
-                        ForEach(ThrowType.allCases, id: \.self) { t in
-                            Text(t.rawValue).tag(t)
-                        }
+                        Text(ThrowType.backhand.rawValue).tag(ThrowType.backhand)
+                        Text(ThrowType.forehand.rawValue).tag(ThrowType.forehand)
                     }
 
                     NavigationLink("My Discs") {
@@ -97,7 +95,7 @@ struct SettingsView: View {
                                 nose: -3.2, wobble: 8.1,
                                 duration_ms: 280, release_idx: 0,
                                 motion_start_idx: 0, stationary_end: 0,
-                                launch: 6.4
+                                launch: 6.4, seq: nil
                             )
                             VoiceManager.announceThrow(sample, settings: voice)
                         }

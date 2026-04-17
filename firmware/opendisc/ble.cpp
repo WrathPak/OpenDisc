@@ -56,6 +56,7 @@ extern bool autoArm;
 extern float triggerG;
 extern bool hasLastThrow;
 extern ThrowMetrics lastMetrics;
+extern uint32_t throwSeq;
 
 // Functions from disc_golf_imu.ino
 extern void handleCalStart();
@@ -227,7 +228,10 @@ void blePushState(const char* stateName) {
 }
 
 void blePushThrowReady() {
-  bleSendJson("{\"type\":\"throw_ready\"}");
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"type\":\"throw_ready\",\"seq\":%u}",
+           (unsigned)throwSeq);
+  bleSendJson(buf);
 }
 
 // Build one binary dump frame for `frame` into `buf`. Returns bytes written.
@@ -470,10 +474,11 @@ void bleHandleCommand(const char* json) {
     snprintf(buf, sizeof(buf),
       "{\"type\":\"status\",\"state\":\"%s\",\"auto_arm\":%s,"
       "\"radius\":%.6f,\"cal_rx\":%.6f,\"cal_ry\":%.6f,"
-      "\"has_throw\":%s,\"fw_version\":\"1.0.0\"}",
+      "\"has_throw\":%s,\"throw_seq\":%u,\"fw_version\":\"1.0.1\"}",
       stateNames[state], autoArm ? "true" : "false",
       calRadius, calRx, calRy,
-      hasLastThrow ? "true" : "false");
+      hasLastThrow ? "true" : "false",
+      (unsigned)throwSeq);
     bleSendJson(buf);
 
   } else if (strcmp(cmd, "live_start") == 0) {
@@ -509,12 +514,14 @@ void bleHandleCommand(const char* json) {
         "\"mph\":%.2f,\"peak_g\":%.2f,"
         "\"hyzer\":%.1f,\"nose\":%.1f,\"launch\":%.1f,"
         "\"wobble\":%.1f,\"duration_ms\":%lu,"
-        "\"release_idx\":%d,\"motion_start_idx\":%d,\"stationary_end\":%d}",
+        "\"release_idx\":%d,\"motion_start_idx\":%d,\"stationary_end\":%d,"
+        "\"seq\":%u}",
         m.valid ? "true" : "false",
         m.rpm, m.mph, m.peak_accel_g,
         m.launch_hyzer_deg, m.launch_nose_deg, m.launch_angle_deg, m.wobble_deg,
         (unsigned long)m.duration_ms,
-        m.release_index, m.motion_start_index, m.stationary_end);
+        m.release_index, m.motion_start_index, m.stationary_end,
+        (unsigned)throwSeq);
       bleSendJson(buf);
     }
 
