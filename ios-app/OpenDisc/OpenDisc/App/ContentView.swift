@@ -28,6 +28,11 @@ struct ContentView: View {
                     Label("History", systemImage: "list.bullet.clipboard")
                 }
 
+            StatsView()
+                .tabItem {
+                    Label("Stats", systemImage: "chart.bar.xaxis")
+                }
+
             CalibrationView()
                 .tabItem {
                     Label("Calibrate", systemImage: "scope")
