@@ -3,6 +3,28 @@
 #include "sensors.h"
 #include "analyzer.h"
 
+// ─── Raw-dump session state ────────────────────────────────────────────
+// The dump handler can NOT run inside onWrite: NimBLE's RX callback executes
+// on the BLE host task, which is the same task that drains notifications to
+// the radio. Calling notify() + delay() from inside onWrite queues TX data
+// onto the one task that's now blocked, so almost nothing ships. Everything
+// below is driven from bleTick() on the Arduino loop task instead.
+static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 8;
+static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 8;
+static constexpr uint16_t DUMP_PRE_TRIGGER = 960;
+static constexpr uint16_t DUMP_RING_SIZE   = 1920;
+
+// Written by onWrite (BLE task), consumed by bleTick (Arduino task). 1-byte
+// aligned writes on ESP32 are atomic — no locking needed for a plain flag.
+static volatile bool dumpStartRequested = false;
+static volatile bool dumpNextRequested  = false;
+
+// Dump session state — only touched by bleTick / helpers, so no races.
+static bool     dumpActive      = false;
+static uint16_t dumpTotalFrames = 0;
+static uint16_t dumpNextFrame   = 0;
+static uint16_t dumpRingStart   = 0;
+
 #define NUS_SERVICE_UUID        "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define NUS_RX_UUID             "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define NUS_TX_UUID             "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
@@ -114,7 +136,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.3");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.4");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -173,8 +195,102 @@ void blePushThrowReady() {
   bleSendJson("{\"type\":\"throw_ready\"}");
 }
 
+// Build one binary dump frame for `frame` into `buf`. Returns bytes written.
+static size_t buildDumpFrame(uint16_t frame, uint8_t* buf) {
+  extern RawSample ring[];
+  const uint16_t frameStart = frame * DUMP_SAMPLES_PER_FRAME;
+  const uint16_t samplesInFrame =
+    (uint16_t)((DUMP_RING_SIZE - frameStart) < DUMP_SAMPLES_PER_FRAME
+               ? (DUMP_RING_SIZE - frameStart) : DUMP_SAMPLES_PER_FRAME);
+  buf[0] = 0xFF;
+  buf[1] = 0x01;
+  buf[2] = (uint8_t)(frame & 0xFF);
+  buf[3] = (uint8_t)((frame >> 8) & 0xFF);
+  buf[4] = (uint8_t)samplesInFrame;
+  buf[5] = 0;
+  size_t off = 6;
+  for (uint16_t k = 0; k < samplesInFrame; k++) {
+    const uint16_t sampleIdx = frameStart + k;
+    const uint16_t ringIdx   = (dumpRingStart + sampleIdx) % DUMP_RING_SIZE;
+    const RawSample& s = ring[ringIdx];
+    const int16_t sampleI = (int16_t)((int)sampleIdx - (int)DUMP_PRE_TRIGGER);
+    int16_t fields[10] = {sampleI, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, s.hx, s.hy, s.hz};
+    for (int f = 0; f < 10; f++) {
+      buf[off++] = (uint8_t)(fields[f] & 0xFF);
+      buf[off++] = (uint8_t)((fields[f] >> 8) & 0xFF);
+    }
+  }
+  return off;
+}
+
+// Initialize a dump session. Called from bleTick() on the Arduino task, so
+// the notify() here transmits properly.
+static void handleDumpStart() {
+  extern uint16_t triggerIndex;
+  if (!hasLastThrow) {
+    bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
+    dumpActive = false;
+    return;
+  }
+  dumpTotalFrames = (DUMP_RING_SIZE + DUMP_SAMPLES_PER_FRAME - 1) / DUMP_SAMPLES_PER_FRAME;
+  dumpRingStart   = (triggerIndex + DUMP_RING_SIZE - DUMP_PRE_TRIGGER) % DUMP_RING_SIZE;
+  dumpNextFrame   = 0;
+  dumpActive      = true;
+  char startMsg[200];
+  snprintf(startMsg, sizeof(startMsg),
+    "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,"
+    "\"spf\":%u,\"fmt\":\"bin1\",\"batch\":%u,\"mode\":\"pull\"}",
+    DUMP_RING_SIZE, dumpTotalFrames, DUMP_SAMPLES_PER_FRAME, DUMP_FRAMES_PER_BATCH);
+  bleSendJson(startMsg);
+  debugMsg("dump start: %u frames queued", dumpTotalFrames);
+}
+
+// Send up to DUMP_FRAMES_PER_BATCH frames plus a batch-or-done marker.
+// Runs on the Arduino task — delay() here does NOT block the BLE host task,
+// so the queued notifications can actually transmit between pacing gaps.
+static void handleDumpNext() {
+  if (!dumpActive) {
+    bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
+    return;
+  }
+  uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
+  uint16_t sent = 0;
+  while (sent < DUMP_FRAMES_PER_BATCH && dumpNextFrame < dumpTotalFrames) {
+    size_t len = buildDumpFrame(dumpNextFrame, buf);
+    bleSendBinary(buf, len);
+    // Small pacing between frames within a batch. BLE task is free to drain.
+    delay(10);
+    sent++;
+    dumpNextFrame++;
+  }
+  // Brief pause so the last frame gets fully drained before the status JSON.
+  delay(15);
+  if (dumpNextFrame >= dumpTotalFrames) {
+    bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
+    dumpActive = false;
+    debugMsg("dump complete");
+  } else {
+    char batchMsg[80];
+    snprintf(batchMsg, sizeof(batchMsg),
+      "{\"type\":\"dump\",\"status\":\"batch\",\"next\":%u}",
+      dumpNextFrame);
+    bleSendJson(batchMsg);
+  }
+}
+
 void bleTick() {
   if (!deviceConnected) return;
+
+  // Service dump requests flagged by onWrite. Do this first so a pending
+  // dump doesn't get starved by live-stream chatter below.
+  if (dumpStartRequested) {
+    dumpStartRequested = false;
+    handleDumpStart();
+  }
+  if (dumpNextRequested) {
+    dumpNextRequested = false;
+    handleDumpNext();
+  }
 
   unsigned long now = millis();
 
@@ -383,132 +499,15 @@ void bleHandleCommand(const char* json) {
     debugMsg("WiFi enabled by BLE client");
     bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi on.\"}");
 
-  } else if (strcmp(cmd, "dump_raw") == 0 || strcmp(cmd, "dump_next") == 0) {
-    // Pull-based binary ring-buffer dump.
-    //
-    // Push-style streaming (even at 25 ms pacing) reliably overflows the
-    // ESP32 NimBLE TX queue once it gets going — after ~17 frames the rest
-    // vanish. With a pull-based protocol the client (iOS) controls the rate:
-    // it requests a small batch, we send it, it acks by requesting the next.
-    //
-    // Flow:
-    //   iOS -> {"cmd":"dump_raw"}
-    //   FW  <- {"type":"dump","status":"start","samples":1920,"frames":240,
-    //                "spf":8,"fmt":"bin1","batch":8}
-    //   (iOS pulls)
-    //   iOS -> {"cmd":"dump_next"}
-    //   FW  <- <binary frame>*N + {"type":"dump","status":"batch","sent":N}
-    //   (loop)
-    //   FW  <- {"type":"dump","status":"done"} when all frames sent
-    //
-    // Batch of 8 frames per pull keeps us well under NimBLE's TX queue
-    // ceiling and only costs one round-trip per batch (~30ms of iOS BLE
-    // latency). 30 batches × 35ms ≈ 1-2s total round-trip overhead, plus
-    // the actual frame transmission time.
-    extern RawSample ring[];
-    extern uint16_t triggerIndex;
-    #define EXT_PRE_TRIGGER 960
-    #define EXT_POST_TRIGGER 960
-    #define EXT_RING_SIZE (EXT_PRE_TRIGGER + EXT_POST_TRIGGER)
-    constexpr uint16_t SAMPLES_PER_FRAME = 8;
-    // One frame per pull. The ESP32 NimBLE TX queue reliably drops any
-    // notification sent in a burst after the first; sending one frame at a
-    // time and waiting for the client to ack with another dump_next keeps
-    // the queue from getting ahead of iOS's consumption rate. Cost is
-    // round-trip latency per frame, but the total dump is still <10s.
-    constexpr uint16_t FRAMES_PER_BATCH  = 1;
+  } else if (strcmp(cmd, "dump_raw") == 0) {
+    // DO NOT do dump work here — we're on the NimBLE RX task and calling
+    // notify() from here would queue TX onto this same task before we
+    // return. Just flag it and bleTick() on the Arduino loop task picks
+    // it up.
+    dumpStartRequested = true;
 
-    // Per-dump state (persists across dump_next calls).
-    static bool     dumpActive    = false;
-    static uint16_t dumpTotalFrames = 0;
-    static uint16_t dumpNextFrame = 0;
-    static uint16_t dumpRingStart = 0;
-
-    if (strcmp(cmd, "dump_raw") == 0) {
-      // Initialize a new dump session.
-      if (!hasLastThrow) {
-        bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
-        dumpActive = false;
-      } else {
-        const uint16_t totalSamples = EXT_RING_SIZE;
-        dumpTotalFrames = (totalSamples + SAMPLES_PER_FRAME - 1) / SAMPLES_PER_FRAME;
-        dumpRingStart   = (triggerIndex + totalSamples - EXT_PRE_TRIGGER) % totalSamples;
-        dumpNextFrame   = 0;
-        dumpActive      = true;
-
-        char startMsg[192];
-        snprintf(startMsg, sizeof(startMsg),
-          "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,"
-          "\"spf\":%u,\"fmt\":\"bin1\",\"batch\":%u,\"mode\":\"pull\"}",
-          totalSamples, dumpTotalFrames, SAMPLES_PER_FRAME, FRAMES_PER_BATCH);
-        bleSendJson(startMsg);
-        debugMsg("dump_raw: %u frames ready, waiting for dump_next",
-                 dumpTotalFrames);
-      }
-    } else {
-      // dump_next — send up to FRAMES_PER_BATCH frames, then a batch marker.
-      if (!dumpActive) {
-        bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
-      } else {
-        const uint16_t totalSamples = EXT_RING_SIZE;
-        uint8_t buf[6 + SAMPLES_PER_FRAME * 20];
-        uint16_t sentThisBatch = 0;
-
-        while (sentThisBatch < FRAMES_PER_BATCH &&
-               dumpNextFrame < dumpTotalFrames) {
-          const uint16_t frame = dumpNextFrame;
-          const uint16_t frameStart = frame * SAMPLES_PER_FRAME;
-          const uint16_t samplesInFrame =
-            (uint16_t)((totalSamples - frameStart) < SAMPLES_PER_FRAME
-                       ? (totalSamples - frameStart) : SAMPLES_PER_FRAME);
-
-          buf[0] = 0xFF;
-          buf[1] = 0x01;
-          buf[2] = (uint8_t)(frame & 0xFF);
-          buf[3] = (uint8_t)((frame >> 8) & 0xFF);
-          buf[4] = (uint8_t)samplesInFrame;
-          buf[5] = 0;
-
-          size_t off = 6;
-          auto writeI16LE = [&](int16_t v) {
-            buf[off++] = (uint8_t)(v & 0xFF);
-            buf[off++] = (uint8_t)((v >> 8) & 0xFF);
-          };
-
-          for (uint16_t k = 0; k < samplesInFrame; k++) {
-            const uint16_t sampleIdx = frameStart + k;
-            const uint16_t ringIdx   = (dumpRingStart + sampleIdx) % totalSamples;
-            const RawSample& s = ring[ringIdx];
-            const int16_t sampleI = (int16_t)((int)sampleIdx - (int)EXT_PRE_TRIGGER);
-            writeI16LE(sampleI);
-            writeI16LE(s.ax); writeI16LE(s.ay); writeI16LE(s.az);
-            writeI16LE(s.gx); writeI16LE(s.gy); writeI16LE(s.gz);
-            writeI16LE(s.hx); writeI16LE(s.hy); writeI16LE(s.hz);
-          }
-
-          bleSendBinary(buf, off);
-          sentThisBatch++;
-          dumpNextFrame++;
-        }
-
-        // Let the binary frame actually leave the TX queue before the status
-        // JSON follows — otherwise they share a connection event and either
-        // the frame or the status gets clobbered.
-        delay(20);
-
-        if (dumpNextFrame >= dumpTotalFrames) {
-          bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
-          dumpActive = false;
-          debugMsg("dump_raw: complete");
-        } else {
-          char batchMsg[80];
-          snprintf(batchMsg, sizeof(batchMsg),
-            "{\"type\":\"dump\",\"status\":\"batch\",\"next\":%u}",
-            dumpNextFrame);
-          bleSendJson(batchMsg);
-        }
-      }
-    }
+  } else if (strcmp(cmd, "dump_next") == 0) {
+    dumpNextRequested = true;
 
   } else if (strcmp(cmd, "imudiag") == 0) {
     ImuDiag d = readImuDiag();
