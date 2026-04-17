@@ -105,6 +105,13 @@ final class BLEManager: NSObject {
     /// Highest seq we've ACK'd already (so we don't re-ACK the same batch
     /// boundary twice).
     var dumpLastAckSeq: Int = -1
+    /// Diagnostic: every call to handleDumpBinaryFrame increments this,
+    /// whether or not the frame was accepted. Visible in the dashboard card
+    /// so we can spot mismatches between "frames arrived at iOS" and
+    /// "samples actually stored".
+    var dumpFrameCallCount: Int = 0
+    var dumpFrameDedupCount: Int = 0
+    var dumpFrameHeaderRejectCount: Int = 0
     /// Set of frame seq numbers successfully decoded so far — used for progress
     /// and to detect gaps.
     var dumpReceivedFrames: Set<Int> = []
@@ -201,6 +208,9 @@ final class BLEManager: NSObject {
         dumpExpectedFrames = nil
         dumpPRNBatch = 0
         dumpLastAckSeq = -1
+        dumpFrameCallCount = 0
+        dumpFrameDedupCount = 0
+        dumpFrameHeaderRejectCount = 0
         dumpProgress = 0
         isDumping = true
         sendCommand(.dumpRaw)
@@ -404,9 +414,11 @@ final class BLEManager: NSObject {
     ///   byte 5    : reserved
     ///   bytes 6+  : `count` samples, each 10×int16 LE (i, ax..az, gx..gz, hx..hz)
     private func handleDumpBinaryFrame(data: Data) {
+        dumpFrameCallCount += 1
         guard data.count >= 6, data[0] == 0xFF, data[1] == 0x01 else {
+            dumpFrameHeaderRejectCount += 1
             dumpDecodeFailures += 1
-            dumpDecodeLastError = dumpDecodeLastError ?? "Bad binary header (len=\(data.count))"
+            dumpDecodeLastError = dumpDecodeLastError ?? "Bad binary header (len=\(data.count), first=\(data.first.map { String(format: "0x%02x", $0) } ?? "nil"))"
             return
         }
         let seq = Int(data[2]) | (Int(data[3]) << 8)
@@ -421,6 +433,7 @@ final class BLEManager: NSObject {
         // Dedup: if this seq was already decoded (e.g. firmware retransmitted
         // after a watchdog retry), drop the payload silently.
         if dumpReceivedFrames.contains(seq) {
+            dumpFrameDedupCount += 1
             // Still counts as activity — keep watchdog alive.
             dumpWatchdogRetries = 0
             armDumpWatchdog()
