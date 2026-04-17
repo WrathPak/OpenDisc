@@ -153,7 +153,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.8");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.9");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -252,8 +252,13 @@ static size_t buildDumpFrame(uint16_t frame, uint8_t* buf) {
   return off;
 }
 
-// Initialize a dump session. Called from bleTick() on the Arduino task, so
-// the notify() here transmits properly.
+// Pure-push dump: on dump_raw, send start, then fire all 240 binary frames
+// back-to-back with pacing, then send done. NO per-frame status JSON between
+// binaries — CoreBluetooth coalesces rapid notifications on the same
+// characteristic, so a JSON status following immediately after a binary
+// frame causes iOS to receive only the JSON. All the binary frames get lost.
+// (Empirically confirmed via serial logs: firmware sent 240 binary + 240
+// status, iOS received 1 binary + 240 status.)
 static void handleDumpStart() {
   extern uint16_t triggerIndex;
   if (!hasLastThrow) {
@@ -261,49 +266,45 @@ static void handleDumpStart() {
     dumpActive = false;
     return;
   }
-  dumpTotalFrames = (DUMP_RING_SIZE + DUMP_SAMPLES_PER_FRAME - 1) / DUMP_SAMPLES_PER_FRAME;
-  dumpRingStart   = (triggerIndex + DUMP_RING_SIZE - DUMP_PRE_TRIGGER) % DUMP_RING_SIZE;
-  dumpNextFrame   = 0;
-  dumpActive      = true;
+  const uint16_t totalFrames = (DUMP_RING_SIZE + DUMP_SAMPLES_PER_FRAME - 1) / DUMP_SAMPLES_PER_FRAME;
+  dumpRingStart = (triggerIndex + DUMP_RING_SIZE - DUMP_PRE_TRIGGER) % DUMP_RING_SIZE;
+  dumpActive    = true;
+
   char startMsg[200];
   snprintf(startMsg, sizeof(startMsg),
     "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,"
-    "\"spf\":%u,\"fmt\":\"bin1\",\"batch\":%u,\"mode\":\"pull\"}",
-    DUMP_RING_SIZE, dumpTotalFrames, DUMP_SAMPLES_PER_FRAME, DUMP_FRAMES_PER_BATCH);
+    "\"spf\":%u,\"fmt\":\"bin1\",\"mode\":\"push\"}",
+    DUMP_RING_SIZE, totalFrames, DUMP_SAMPLES_PER_FRAME);
   bleSendJson(startMsg);
-  debugMsg("dump start: %u frames queued", dumpTotalFrames);
+  debugMsg("dump start: pushing %u frames", totalFrames);
+
+  // Let `start` drain through the BLE stack fully before the binary burst
+  // so it's not itself at risk of CoreBluetooth coalescing with frame 0.
+  delay(100);
+
+  // Pure binary burst — no JSON mixed in. Pacing matches iOS's typical
+  // 30ms BLE connection interval; one notification fits in one event and
+  // nothing else competes with it on this characteristic.
+  uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
+  for (uint16_t frame = 0; frame < totalFrames; frame++) {
+    size_t len = buildDumpFrame(frame, buf);
+    bleSendBinary(buf, len);
+    delay(25);
+  }
+
+  // Trailing drain window before the JSON `done` marker, for the same
+  // coalescing-avoidance reason.
+  delay(100);
+  bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
+  dumpActive = false;
+  debugMsg("dump complete");
 }
 
-// Send up to DUMP_FRAMES_PER_BATCH frames plus a batch-or-done marker.
-// Runs on the Arduino task — delay() here does NOT block the BLE host task,
-// so the queued notifications can actually transmit between pacing gaps.
+// Kept around for backward compat with the pull-based protocol (older iOS
+// builds). New firmware completes the entire dump inside handleDumpStart,
+// so dump_next becomes a no-op on the new flow — iOS just won't call it.
 static void handleDumpNext() {
-  if (!dumpActive) {
-    bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
-    return;
-  }
-  uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
-  uint16_t sent = 0;
-  while (sent < DUMP_FRAMES_PER_BATCH && dumpNextFrame < dumpTotalFrames) {
-    size_t len = buildDumpFrame(dumpNextFrame, buf);
-    // indicate() blocks until the client ACKs at the ATT layer — natural
-    // flow control. No artificial pacing needed; we can only loop as fast
-    // as iOS can consume.
-    bleSendBinary(buf, len);
-    sent++;
-    dumpNextFrame++;
-  }
-  if (dumpNextFrame >= dumpTotalFrames) {
-    bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
-    dumpActive = false;
-    debugMsg("dump complete");
-  } else {
-    char batchMsg[80];
-    snprintf(batchMsg, sizeof(batchMsg),
-      "{\"type\":\"dump\",\"status\":\"batch\",\"next\":%u}",
-      dumpNextFrame);
-    bleSendJson(batchMsg);
-  }
+  bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
 }
 
 void bleTick() {
