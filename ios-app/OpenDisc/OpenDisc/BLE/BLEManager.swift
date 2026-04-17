@@ -98,6 +98,13 @@ final class BLEManager: NSObject {
     /// Total frames firmware will send (binary protocol). Nil on the legacy
     /// per-sample JSON protocol.
     var dumpExpectedFrames: Int?
+    /// Packet-receipt-notification batch size negotiated at `start`. iOS
+    /// writes `dump_ack` every this-many received frames as Nordic-DFU-style
+    /// flow control. 0 means ACKs disabled (legacy modes).
+    var dumpPRNBatch: Int = 0
+    /// Highest seq we've ACK'd already (so we don't re-ACK the same batch
+    /// boundary twice).
+    var dumpLastAckSeq: Int = -1
     /// Set of frame seq numbers successfully decoded so far — used for progress
     /// and to detect gaps.
     var dumpReceivedFrames: Set<Int> = []
@@ -192,6 +199,8 @@ final class BLEManager: NSObject {
         dumpLastStatus = nil
         dumpExpectedCount = nil
         dumpExpectedFrames = nil
+        dumpPRNBatch = 0
+        dumpLastAckSeq = -1
         dumpProgress = 0
         isDumping = true
         sendCommand(.dumpRaw)
@@ -334,6 +343,7 @@ final class BLEManager: NSObject {
                 if response.status == "start" {
                     if let n = response.samples { dumpExpectedCount = n }
                     if let f = response.frames { dumpExpectedFrames = f }
+                    if let b = response.batch { dumpPRNBatch = b }
                 }
                 print("[BLE] dump status=\(response.status) samples=\(response.samples ?? -1) frames=\(response.frames ?? -1) received=\(dumpSamples.count) decodeFailures=\(dumpDecodeFailures)")
                 // Every status reply resets the retry counter — we heard
@@ -341,11 +351,12 @@ final class BLEManager: NSObject {
                 dumpWatchdogRetries = 0
                 switch response.status {
                 case "start":
-                    // New firmware (1.0.9+) uses pure push — firmware will
-                    // now fire all binary frames with pacing and then send
-                    // `done`. We just arm the watchdog and wait. If the
-                    // response advertises mode == "pull" (old firmware) we
-                    // fall back to the pull behavior.
+                    // mode=prn  (1.1.0+): firmware blocks on our ACK every
+                    //                     `batch` frames. Nothing to send
+                    //                     until the first batch arrives.
+                    // mode=push (1.0.9) : firmware streams without waiting;
+                    //                     we just listen.
+                    // mode=pull (legacy): client-driven, iOS pulls each batch.
                     if response.mode == "pull" {
                         dumpNext()
                     } else {
@@ -450,6 +461,19 @@ final class BLEManager: NSObject {
         // dropped, progress can still advance and the watchdog shouldn't fire.
         dumpWatchdogRetries = 0
         armDumpWatchdog()
+
+        // PRN (Nordic-DFU-style) flow control: ACK every `dumpPRNBatch`
+        // frames so firmware knows it's safe to send the next batch. We
+        // only ACK on batch boundaries (or on the very last frame) to keep
+        // RX-write overhead low.
+        if dumpPRNBatch > 0 {
+            let isBatchBoundary = (seq + 1) % dumpPRNBatch == 0
+            let isLastFrame = (dumpExpectedFrames.map { seq + 1 >= $0 } ?? false)
+            if (isBatchBoundary || isLastFrame) && seq > dumpLastAckSeq {
+                dumpLastAckSeq = seq
+                sendCommand(.dumpAck(last: seq))
+            }
+        }
     }
 }
 

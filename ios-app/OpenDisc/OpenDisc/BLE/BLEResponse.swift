@@ -99,7 +99,8 @@ struct DumpStatusResponse: Decodable {
     let frames: Int?
     let spf: Int?        // samples per frame (binary protocol)
     let fmt: String?     // "bin1" = binary protocol v1
-    let mode: String?    // "push" (firmware 1.0.9+) or "pull" (legacy)
+    let mode: String?    // "prn" (firmware 1.1.0+), "push" (1.0.9), "pull" (legacy)
+    let batch: Int?      // PRN batch size — ACK every this-many frames
 }
 
 struct DumpSampleResponse: Codable {
