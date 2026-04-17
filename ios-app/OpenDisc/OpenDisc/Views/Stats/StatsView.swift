@@ -192,18 +192,37 @@ struct StatsView: View {
     }
 
     private var mphChart: some View {
-        Chart {
-            ForEach(filtered.filter { $0.mph > 0 }) { t in
+        let valid = filtered.filter { $0.mph > 0 }.sorted { $0.timestamp < $1.timestamp }
+        let rolling = rollingAverage(valid.map(\.mph), window: 5)
+        return Chart {
+            ForEach(Array(valid.enumerated()), id: \.offset) { (i, t) in
                 PointMark(
                     x: .value("Time", t.timestamp),
                     y: .value("MPH", t.mph)
                 )
-                .foregroundStyle(.blue.opacity(0.6))
+                .foregroundStyle(.blue.opacity(0.5))
+            }
+            ForEach(Array(valid.enumerated()), id: \.offset) { (i, t) in
+                LineMark(
+                    x: .value("Time", t.timestamp),
+                    y: .value("Rolling", rolling[i])
+                )
+                .foregroundStyle(.orange)
+                .interpolationMethod(.catmullRom)
             }
         }
         .frame(height: 160)
         .padding(10)
         .glassEffect(.regular)
+    }
+
+    private func rollingAverage(_ values: [Float], window: Int) -> [Float] {
+        guard !values.isEmpty else { return [] }
+        return values.indices.map { i in
+            let start = max(0, i - window + 1)
+            let slice = values[start...i]
+            return slice.reduce(0, +) / Float(slice.count)
+        }
     }
 
     private var spinSpeedChart: some View {

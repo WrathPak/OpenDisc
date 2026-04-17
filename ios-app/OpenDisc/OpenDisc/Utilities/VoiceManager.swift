@@ -41,4 +41,14 @@ enum VoiceManager {
         synthesizer.stopSpeaking(at: .immediate)
         synthesizer.speak(utterance)
     }
+
+    /// Announce a personal-record callout. Queued after the metric readout.
+    static func announcePR(_ message: String, settings: VoiceSettings) {
+        guard settings.enabled else { return }
+        let utterance = AVSpeechUtterance(string: message)
+        utterance.rate = settings.speechRate
+        utterance.volume = settings.volume
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        synthesizer.speak(utterance)
+    }
 }

@@ -91,6 +91,13 @@ struct ContentView: View {
         modelContext.insert(throwData)
         try? modelContext.save()
 
+        // PR check against all persisted throws.
+        let allThrows = (try? modelContext.fetch(FetchDescriptor<ThrowData>())) ?? []
+        if let message = PRService.checkForPR(candidate: throwData, history: allThrows) {
+            HapticManager.armed()
+            VoiceManager.announcePR(message, settings: voiceSettings)
+        }
+
         // Kick off the raw dump so we can reconstruct the trajectory later.
         pendingThrow = throwData
         bleManager.dumpRaw()
