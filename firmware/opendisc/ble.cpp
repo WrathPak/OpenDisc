@@ -10,18 +10,25 @@
 // onto the one task that's now blocked, so almost nothing ships. Everything
 // below is driven from bleTick() on the Arduino loop task instead.
 static constexpr uint16_t DUMP_SAMPLES_PER_FRAME = 8;
-// Batch size 1 for diagnostics: each dump_next pulls exactly one indicate.
-// With batch=1 we can tell from serial exactly how many pulls iOS made and
-// how many indicates the firmware actually attempted. Raise after we
-// understand what's happening.
-static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 1;
+// Packet Receipt Notification (Nordic-DFU style) batch size. Firmware
+// sends this many binary frames, then blocks waiting for iOS to write
+// `dump_ack{"last":N}` on the RX characteristic. This is the real fix
+// for ESP32 NimBLE's silent TX-queue drops — see NimBLE-Arduino#728.
+// 4 is small enough to stay far under any reasonable mbuf ceiling.
+static constexpr uint16_t DUMP_FRAMES_PER_BATCH  = 4;
 static constexpr uint16_t DUMP_PRE_TRIGGER = 960;
 static constexpr uint16_t DUMP_RING_SIZE   = 1920;
 
 // Written by onWrite (BLE task), consumed by bleTick (Arduino task). 1-byte
 // aligned writes on ESP32 are atomic — no locking needed for a plain flag.
-static volatile bool dumpStartRequested = false;
-static volatile bool dumpNextRequested  = false;
+static volatile bool     dumpStartRequested = false;
+static volatile bool     dumpNextRequested  = false;
+// PRN acknowledgement from iOS. Written by onWrite when the app sends
+// `{"cmd":"dump_ack","last":N}`; consumed by the dump loop on the Arduino
+// task. The `last` value lets the firmware confirm iOS received up through
+// at least that frame seq.
+static volatile bool     dumpAckReceived    = false;
+static volatile uint16_t dumpAckLastSeq     = 0;
 
 // Dump session state — only touched by bleTick / helpers, so no races.
 static bool     dumpActive      = false;
@@ -153,7 +160,7 @@ void initBLE() {
   // Device Info Service
   NimBLEService* pDis = pServer->createService("180A");
   pDis->createCharacteristic("2A24", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
-  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.0.9");
+  pDis->createCharacteristic("2A26", NIMBLE_PROPERTY::READ)->setValue("1.1.0");
   pDis->createCharacteristic("2A29", NIMBLE_PROPERTY::READ)->setValue("OpenDisc");
   pDis->start();
 
@@ -252,13 +259,17 @@ static size_t buildDumpFrame(uint16_t frame, uint8_t* buf) {
   return off;
 }
 
-// Pure-push dump: on dump_raw, send start, then fire all 240 binary frames
-// back-to-back with pacing, then send done. NO per-frame status JSON between
-// binaries — CoreBluetooth coalesces rapid notifications on the same
-// characteristic, so a JSON status following immediately after a binary
-// frame causes iOS to receive only the JSON. All the binary frames get lost.
-// (Empirically confirmed via serial logs: firmware sent 240 binary + 240
-// status, iOS received 1 binary + 240 status.)
+// Nordic-DFU-style Packet Receipt Notification flow control.
+//
+// notify() on NimBLE-Arduino does not block on wire delivery — it only
+// enqueues an mbuf. Under sustained burst (240 × 166 B) the TX queue
+// silently drops frames that don't fit. See NimBLE-Arduino#728.
+//
+// Fix: send N frames, then wait for iOS to write
+//   {"cmd":"dump_ack","last":<lastSeqReceived>}
+// before sending the next N. iOS paces the transfer by only ACKing after
+// it has actually received and decoded the frames. This is the same
+// pattern Nordic DFU uses to ship tens of MB of firmware over BLE.
 static void handleDumpStart() {
   extern uint16_t triggerIndex;
   if (!hasLastThrow) {
@@ -267,42 +278,74 @@ static void handleDumpStart() {
     return;
   }
   const uint16_t totalFrames = (DUMP_RING_SIZE + DUMP_SAMPLES_PER_FRAME - 1) / DUMP_SAMPLES_PER_FRAME;
-  dumpRingStart = (triggerIndex + DUMP_RING_SIZE - DUMP_PRE_TRIGGER) % DUMP_RING_SIZE;
-  dumpActive    = true;
+  dumpRingStart      = (triggerIndex + DUMP_RING_SIZE - DUMP_PRE_TRIGGER) % DUMP_RING_SIZE;
+  dumpActive         = true;
+  dumpAckReceived    = false;
+  dumpAckLastSeq     = 0;
 
-  char startMsg[200];
+  char startMsg[220];
   snprintf(startMsg, sizeof(startMsg),
     "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,"
-    "\"spf\":%u,\"fmt\":\"bin1\",\"mode\":\"push\"}",
-    DUMP_RING_SIZE, totalFrames, DUMP_SAMPLES_PER_FRAME);
+    "\"spf\":%u,\"batch\":%u,\"fmt\":\"bin1\",\"mode\":\"prn\"}",
+    DUMP_RING_SIZE, totalFrames,
+    DUMP_SAMPLES_PER_FRAME, DUMP_FRAMES_PER_BATCH);
   bleSendJson(startMsg);
-  debugMsg("dump start: pushing %u frames", totalFrames);
+  debugMsg("dump start: %u frames, batch=%u, waiting for ACK",
+           totalFrames, DUMP_FRAMES_PER_BATCH);
 
-  // Let `start` drain through the BLE stack fully before the binary burst
-  // so it's not itself at risk of CoreBluetooth coalescing with frame 0.
-  delay(100);
+  delay(50);  // let `start` drain before the binary burst begins
 
-  // Pure binary burst — no JSON mixed in. Pacing matches iOS's typical
-  // 30ms BLE connection interval; one notification fits in one event and
-  // nothing else competes with it on this characteristic.
   uint8_t buf[6 + DUMP_SAMPLES_PER_FRAME * 20];
-  for (uint16_t frame = 0; frame < totalFrames; frame++) {
-    size_t len = buildDumpFrame(frame, buf);
-    bleSendBinary(buf, len);
-    delay(25);
+  uint16_t nextFrame = 0;
+  while (nextFrame < totalFrames && deviceConnected) {
+    // Send a batch.
+    const uint16_t batchEnd =
+      (nextFrame + DUMP_FRAMES_PER_BATCH < totalFrames)
+        ? nextFrame + DUMP_FRAMES_PER_BATCH
+        : totalFrames;
+    for (uint16_t f = nextFrame; f < batchEnd; f++) {
+      size_t len = buildDumpFrame(f, buf);
+      bleSendBinary(buf, len);
+      // Small intra-batch breathing room so the TX queue drains between
+      // rapid notifies. 15 ms × 4 frames = 60 ms per batch emission.
+      delay(15);
+    }
+
+    // Wait for iOS to ACK this batch. Timeout after 3s of silence so we
+    // don't hang forever if the client disappears.
+    dumpAckReceived = false;
+    const uint16_t waitMs = 3000;
+    uint16_t waited = 0;
+    while (!dumpAckReceived && waited < waitMs && deviceConnected) {
+      delay(5);
+      waited += 5;
+    }
+    if (!dumpAckReceived) {
+      debugMsg("dump ACK timeout at frame %u — aborting", batchEnd);
+      break;
+    }
+
+    // iOS reports the highest seq it received. Resume from one past that.
+    // Normal case: dumpAckLastSeq == batchEnd - 1, so nextFrame = batchEnd.
+    // If iOS lost frames, dumpAckLastSeq is lower and we re-send the gap.
+    if (dumpAckLastSeq + 1 >= batchEnd) {
+      nextFrame = batchEnd;
+    } else {
+      nextFrame = dumpAckLastSeq + 1;
+      debugMsg("dump resending from %u (ACK said last=%u)",
+               nextFrame, dumpAckLastSeq);
+    }
   }
 
-  // Trailing drain window before the JSON `done` marker, for the same
-  // coalescing-avoidance reason.
-  delay(100);
+  delay(50);
   bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
   dumpActive = false;
-  debugMsg("dump complete");
+  debugMsg("dump complete (reached frame %u of %u)", nextFrame, totalFrames);
 }
 
-// Kept around for backward compat with the pull-based protocol (older iOS
-// builds). New firmware completes the entire dump inside handleDumpStart,
-// so dump_next becomes a no-op on the new flow — iOS just won't call it.
+// Legacy no-op — kept for wire-compat with any iOS build that still
+// speaks the old pull protocol. New firmware drives everything via PRN
+// ACKs instead, so any stray dump_next writes just get an idle reply.
 static void handleDumpNext() {
   bleSendJson("{\"type\":\"dump\",\"status\":\"idle\"}");
 }
@@ -541,6 +584,16 @@ void bleHandleCommand(const char* json) {
   } else if (strcmp(cmd, "dump_next") == 0) {
     Serial.println("[BLE RX] dump_next");
     dumpNextRequested = true;
+
+  } else if (strcmp(cmd, "dump_ack") == 0) {
+    // PRN ACK from iOS: Nordic-style packet receipt notification. iOS
+    // writes this every DUMP_FRAMES_PER_BATCH frames it has decoded; we
+    // use it as a credit to send the next batch.
+    float lastF = 0;
+    if (jsonGetFloat(json, "last", &lastF)) {
+      dumpAckLastSeq = (uint16_t)lastF;
+    }
+    dumpAckReceived = true;
 
   } else if (strcmp(cmd, "imudiag") == 0) {
     ImuDiag d = readImuDiag();
