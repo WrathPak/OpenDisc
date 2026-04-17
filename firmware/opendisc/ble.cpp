@@ -136,6 +136,14 @@ void bleSendJson(const char* json) {
   debugMsg("BLE TX %d bytes", len);
 }
 
+// Binary TX on the same characteristic. Client distinguishes binary vs JSON
+// by the leading byte (0xFF = binary, 0x7B = JSON '{').
+void bleSendBinary(const uint8_t* data, size_t len) {
+  if (!deviceConnected || !pTxChar) return;
+  pTxChar->setValue(data, len);
+  pTxChar->notify();
+}
+
 bool bleClientConnected() {
   return deviceConnected;
 }
@@ -373,35 +381,78 @@ void bleHandleCommand(const char* json) {
     bleSendJson("{\"type\":\"ack\",\"msg\":\"WiFi on.\"}");
 
   } else if (strcmp(cmd, "dump_raw") == 0) {
-    // Stream the full ring buffer as chunked JSON lines
+    // Binary-framed ring dump. iOS receives frames on the same TX characteristic
+    // and disambiguates by the leading byte (0xFF = binary dump frame).
+    //
+    // Each frame is 6-byte header + up to 8 samples × 20 bytes = 166 bytes max,
+    // which fits under the default 185-byte BLE notification MTU.
+    //
+    // Frame header:
+    //   byte 0    : 0xFF           magic
+    //   byte 1    : 0x01           protocol version
+    //   bytes 2-3 : seq (uint16 LE) — frame index, 0..N-1
+    //   byte 4    : count          — number of samples in this frame
+    //   byte 5    : reserved (0)
+    // Followed by `count` samples, each 10×int16 LE in order:
+    //   i, ax, ay, az, gx, gy, gz, hx, hy, hz
     extern RawSample ring[];
     extern uint16_t triggerIndex;
     #define EXT_PRE_TRIGGER 960
     #define EXT_POST_TRIGGER 960
     #define EXT_RING_SIZE (EXT_PRE_TRIGGER + EXT_POST_TRIGGER)
+    constexpr uint16_t SAMPLES_PER_FRAME = 8;
 
     if (!hasLastThrow) {
       bleSendJson("{\"type\":\"dump\",\"status\":\"no_throw\"}");
     } else {
-      uint16_t ringSize = EXT_RING_SIZE;
-      uint16_t start = (triggerIndex + ringSize - EXT_PRE_TRIGGER) % ringSize;
-      debugMsg("dump_raw: %d samples starting", ringSize);
-      bleSendJson("{\"type\":\"dump\",\"status\":\"start\",\"samples\":1920}");
-      delay(10);
+      const uint16_t totalSamples = EXT_RING_SIZE;
+      const uint16_t totalFrames = (totalSamples + SAMPLES_PER_FRAME - 1) / SAMPLES_PER_FRAME;
+      const uint16_t ringStart = (triggerIndex + totalSamples - EXT_PRE_TRIGGER) % totalSamples;
+      debugMsg("dump_raw: %u samples in %u frames (binary)", totalSamples, totalFrames);
 
-      // Send in chunks of 10 samples to stay within BLE throughput
-      for (uint16_t i = 0; i < ringSize; i++) {
-        uint16_t idx = (start + i) % ringSize;
-        const RawSample& s = ring[idx];
-        int sn = (int)i - (int)EXT_PRE_TRIGGER;
-        char line[200];
-        snprintf(line, sizeof(line),
-          "{\"type\":\"d\",\"i\":%d,\"ax\":%d,\"ay\":%d,\"az\":%d,"
-          "\"gx\":%d,\"gy\":%d,\"gz\":%d,"
-          "\"hx\":%d,\"hy\":%d,\"hz\":%d}",
-          sn, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, s.hx, s.hy, s.hz);
-        bleSendJson(line);
-        if (i % 10 == 9) delay(5);  // pace for BLE throughput
+      char startMsg[160];
+      snprintf(startMsg, sizeof(startMsg),
+        "{\"type\":\"dump\",\"status\":\"start\",\"samples\":%u,\"frames\":%u,\"spf\":%u,\"fmt\":\"bin1\"}",
+        totalSamples, totalFrames, SAMPLES_PER_FRAME);
+      bleSendJson(startMsg);
+      delay(30);  // let iOS process `start` before the binary stream begins
+
+      uint8_t buf[6 + SAMPLES_PER_FRAME * 20];
+      for (uint16_t frame = 0; frame < totalFrames; frame++) {
+        const uint16_t frameStart = frame * SAMPLES_PER_FRAME;
+        const uint16_t samplesInFrame =
+          (uint16_t)((totalSamples - frameStart) < SAMPLES_PER_FRAME
+                     ? (totalSamples - frameStart) : SAMPLES_PER_FRAME);
+
+        buf[0] = 0xFF;
+        buf[1] = 0x01;
+        buf[2] = (uint8_t)(frame & 0xFF);
+        buf[3] = (uint8_t)((frame >> 8) & 0xFF);
+        buf[4] = (uint8_t)samplesInFrame;
+        buf[5] = 0;
+
+        size_t off = 6;
+        auto writeI16LE = [&](int16_t v) {
+          buf[off++] = (uint8_t)(v & 0xFF);
+          buf[off++] = (uint8_t)((v >> 8) & 0xFF);
+        };
+
+        for (uint16_t k = 0; k < samplesInFrame; k++) {
+          const uint16_t sampleIdx = frameStart + k;
+          const uint16_t ringIdx = (ringStart + sampleIdx) % totalSamples;
+          const RawSample& s = ring[ringIdx];
+          const int16_t sampleI = (int16_t)((int)sampleIdx - (int)EXT_PRE_TRIGGER);
+          writeI16LE(sampleI);
+          writeI16LE(s.ax); writeI16LE(s.ay); writeI16LE(s.az);
+          writeI16LE(s.gx); writeI16LE(s.gy); writeI16LE(s.gz);
+          writeI16LE(s.hx); writeI16LE(s.hy); writeI16LE(s.hz);
+        }
+
+        bleSendBinary(buf, off);
+        // Pacing: one frame per ~15ms stays under the default iOS connection
+        // interval (15-30ms, 1 notification per interval) without flooding
+        // the TX queue. 240 frames × 15ms ≈ 3.6s total — acceptable.
+        delay(15);
       }
       bleSendJson("{\"type\":\"dump\",\"status\":\"done\"}");
       debugMsg("dump_raw: complete");

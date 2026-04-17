@@ -10,6 +10,9 @@ struct DashboardView: View {
     @Binding var throwHand: ThrowHand
     var storageWarning: String? = nil
     var saveError: String? = nil
+    var dumpProgress: Float? = nil
+    var dumpSampleCount: Int = 0
+    var dumpExpectedCount: Int? = nil
 
     private var recentMPHSeries: [(Int, Float)] {
         throwsDesc.prefix(30)
@@ -34,7 +37,9 @@ struct DashboardView: View {
                                     systemImage: "exclamationmark.octagon.fill",
                                     tint: .red)
                     }
-                    if let saveError {
+                    if dumpProgress != nil {
+                        dumpProgressCard
+                    } else if let saveError {
                         errorBanner(title: "Last throw didn't save",
                                     message: saveError,
                                     systemImage: "exclamationmark.triangle.fill",
@@ -95,6 +100,34 @@ struct DashboardView: View {
                 .glassEffect(.regular.tint(.green.opacity(0.15)))
             }
         }
+    }
+
+    private var dumpProgressCard: some View {
+        let progress = dumpProgress ?? 0
+        let percent = Int(progress * 100)
+        let expected = dumpExpectedCount ?? 1920
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Downloading trajectory data")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("\(percent)%")
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            ProgressView(value: Double(progress))
+                .tint(.blue)
+            Text("\(dumpSampleCount) / \(expected) samples")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+        }
+        .padding(12)
+        .glassEffect(.regular.tint(.blue.opacity(0.18)))
     }
 
     private func errorBanner(title: String, message: String, systemImage: String, tint: Color) -> some View {
